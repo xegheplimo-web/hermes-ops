@@ -29,10 +29,10 @@ describe('CLAIM_TASK_SQL — SKIP LOCKED and no unsafe interpolation', () => {
     expect(CLAIM_TASK_SQL).toContain('attempts     = attempts + 1');
   });
 
-  it('sets locked_at, locked_by, and clears available_at', () => {
+  it('sets locked_at and locked_by but does not clear available_at', () => {
     expect(CLAIM_TASK_SQL).toContain('locked_at    = now()');
     expect(CLAIM_TASK_SQL).toContain('locked_by    = $1');
-    expect(CLAIM_TASK_SQL).toContain('available_at = NULL');
+    expect(CLAIM_TASK_SQL).not.toContain('available_at = NULL');
   });
 
   it('uses a positional parameter for the worker id (no interpolation)', () => {
@@ -60,10 +60,11 @@ describe('CLAIM_JOB_SQL — same shape as tasks', () => {
     expect(CLAIM_JOB_SQL).toContain("status       = 'running'");
     expect(CLAIM_JOB_SQL).toContain('attempts     = attempts + 1');
   });
-  it('uses $1 for worker id only', () => {
+  it('uses $1 for worker id only and does not clear available_at', () => {
     expect(CLAIM_JOB_SQL).toContain('$1');
     expect(CLAIM_JOB_SQL).not.toContain('$2');
     expect(CLAIM_JOB_SQL).not.toContain('${');
+    expect(CLAIM_JOB_SQL).not.toContain('available_at = NULL');
   });
 });
 

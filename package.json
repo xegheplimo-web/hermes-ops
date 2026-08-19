@@ -6,6 +6,7 @@
   "scripts": {
     "build": "tsc -b",
     "test": "vitest run",
+    "test:integration": "vitest run integration",
     "lint": "tsc -b --pretty false",
     "db:migrate": "tsc -b packages/db/tsconfig.json && node packages/db/dist/migrate-bin.js"
   },

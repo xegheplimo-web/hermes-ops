@@ -35,7 +35,9 @@ import type { QueueStatus } from './schema.js';
  *   1. Selects the oldest available pending row, skipping rows already locked
  *      by other workers (`FOR UPDATE SKIP LOCKED`, `LIMIT 1`).
  *   2. Atomically transitions it to `running`, increments `attempts`, sets
- *      `locked_at = now()`, `locked_by = $1`, and clears `available_at`.
+ *      `locked_at = now()`, and `locked_by = $1`. `available_at` is left
+ *      unchanged: it is only consulted while `status = 'pending'`, so the
+ *      existing value is harmless and preserves the NOT NULL constraint.
  *   3. Returns the claimed row.
  *
  * Parameters:
@@ -51,7 +53,6 @@ SET status       = 'running',
     attempts     = attempts + 1,
     locked_at    = now(),
     locked_by    = $1,
-    available_at = NULL,
     updated_at   = now()
 WHERE id = (
     SELECT id
@@ -77,7 +78,6 @@ SET status       = 'running',
     attempts     = attempts + 1,
     locked_at    = now(),
     locked_by    = $1,
-    available_at = NULL,
     updated_at   = now()
 WHERE id = (
     SELECT id
