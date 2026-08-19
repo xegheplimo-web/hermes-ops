@@ -6,7 +6,8 @@
   "scripts": {
     "build": "tsc -b",
     "test": "vitest run",
-    "lint": "tsc -b --pretty false"
+    "lint": "tsc -b --pretty false",
+    "db:migrate": "tsc -b packages/db/tsconfig.json && node packages/db/dist/migrate-bin.js"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",

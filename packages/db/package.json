@@ -5,6 +5,9 @@
   "type": "module",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "bin": {
+    "hermes-db-migrate": "./dist/migrate-bin.js"
+  },
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
@@ -15,5 +18,11 @@
     "build": "tsc -b",
     "test": "vitest run",
     "lint": "tsc -b --pretty false"
+  },
+  "dependencies": {
+    "pg": "^8.22.0"
+  },
+  "devDependencies": {
+    "@types/pg": "~8.21.0"
   }
 }
