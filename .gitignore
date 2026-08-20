@@ -1,6 +1,6 @@
-node_modules/
-dist/
-*.log
+node_modules
+dist
 .env
-.env.*
-!.env.example
+.env.local
+*.tsbuildinfo
+.DS_Store
