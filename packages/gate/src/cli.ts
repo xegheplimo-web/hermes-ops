@@ -18,7 +18,7 @@
  * distinguishes the outcome.
  */
 
-import { evaluatePolicy, classifyFromPolicyResult, type PolicyResult } from '@hermes-ops/policy';
+import { evaluatePolicy, classifyFromPolicyResult, recalculatePostDiffRisk, type PolicyResult, type RiskClass } from '@hermes-ops/policy';
 import {
   type HumanApprovalToken,
 } from './approval.js';
@@ -32,12 +32,13 @@ const KNOWN_FLAGS = [
   '--policy-version',
   '--output',
   '--approval',
+  '--changed-files',
 ] as const;
 type KnownFlag = (typeof KNOWN_FLAGS)[number];
 
 const USAGE =
   'usage: hermes-policy-gate --manifest <file.json> --head-sha <40-lowercase-hex> ' +
-  '--policy-version <semver> [--output <file.json>]';
+  '--policy-version <semver> [--output <file.json>] [--changed-files <file1,file2,...>]';
 
 /** Injectable filesystem + stdio surface so the CLI logic is testable. */
 export interface CliIo {
@@ -59,6 +60,7 @@ export interface CliOptions {
   readonly policyVersion: string;
   readonly outputPath?: string;
   readonly approvalToken?: string;
+  readonly changedFiles?: string[];
 }
 
 /** Usage error: bad invocation. Maps to exit code 2. */
@@ -90,6 +92,7 @@ type MutableCliOptions = {
   policyVersion?: string;
   outputPath?: string;
   approvalToken?: string;
+  changedFiles?: string[];
 };
 
 export const parseArgs = (argv: readonly string[]): CliOptions => {
@@ -152,6 +155,9 @@ const setFlag = (opts: MutableCliOptions, name: KnownFlag, value: string): void 
       break;
     case '--approval':
       opts.approvalToken = value;
+      break;
+    case '--changed-files':
+      opts.changedFiles = value.split(',').map((s) => s.trim()).filter((s) => s.length > 0);
       break;
   }
 };
@@ -259,41 +265,45 @@ export const runCli = (argv: readonly string[], io: CliIo): number => {
   }
 
   // Evaluate. The evaluator is pure and never throws on bad input.
-  const result = evaluatePolicy(parsed, {
-    expectedHeadSha: opts.headSha,
-    policyVersion: opts.policyVersion,
-  });
+    const result = evaluatePolicy(parsed, {
+      expectedHeadSha: opts.headSha,
+      policyVersion: opts.policyVersion,
+    });
 
-  // Human approval gate: check if the risk class requires human approval.
-    const riskClass = classifyFromPolicyResult(result);
+    // Post-diff risk recalculation: escalate when changed files touch sensitive paths.
+    const riskClass: RiskClass = opts.changedFiles && opts.changedFiles.length > 0
+      ? recalculatePostDiffRisk(opts.changedFiles, classifyFromPolicyResult(result))
+      : classifyFromPolicyResult(result);
+
+    // Human approval gate: check if the risk class requires human approval.
     if (riskClass === 'human-required') {
-    if (opts.approvalToken === undefined) {
-      // No token → block with HUMAN_APPROVAL_REQUIRED.
-      const blocked = {
-        decision: 'fail',
-        reasonCode: 'HUMAN_APPROVAL_REQUIRED',
-        policyVersion: opts.policyVersion,
-        detail: `human approval required for risk class: ${riskClass}`,
-      };
-      writeResult(io, opts.outputPath, `${JSON.stringify(formatResult(blocked), null, 2)}\n`);
-      return 1;
+      if (opts.approvalToken === undefined) {
+        // No token → block with HUMAN_APPROVAL_REQUIRED.
+        const blocked = {
+          decision: 'fail',
+          reasonCode: 'HUMAN_APPROVAL_REQUIRED',
+          policyVersion: opts.policyVersion,
+          detail: `human approval required for risk class: ${riskClass}`,
+        };
+        writeResult(io, opts.outputPath, `${JSON.stringify(formatResult(blocked), null, 2)}\n`);
+        return 1;
+      }
+      // Parse and validate the approval token.
+      let token: HumanApprovalToken;
+      try {
+        token = JSON.parse(opts.approvalToken);
+      } catch {
+        safeError(io, USAGE);
+        safeError(io, '--approval must be valid JSON');
+        return 2;
+      }
+      if (!token.signedAt || !token.approver || !token.reason || !token.signature) {
+        safeError(io, USAGE);
+        safeError(io, '--approval must be a valid JSON token with signedAt, approver, reason, and signature');
+        return 2;
+      }
+      // Token is valid — proceed with the original evaluation result.
     }
-    // Parse and validate the approval token.
-    let token: HumanApprovalToken;
-    try {
-      token = JSON.parse(opts.approvalToken);
-    } catch {
-      safeError(io, USAGE);
-      safeError(io, '--approval must be valid JSON');
-      return 2;
-    }
-    if (!token.signedAt || !token.approver || !token.reason || !token.signature) {
-      safeError(io, USAGE);
-      safeError(io, '--approval must be a valid JSON token with signedAt, approver, reason, and signature');
-      return 2;
-    }
-    // Token is valid — proceed with the original evaluation result.
-  }
 
   const json = `${JSON.stringify(formatResult(result), null, 2)}\n`;
 
