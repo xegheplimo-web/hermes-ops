@@ -8,10 +8,12 @@
     "test": "vitest run",
     "test:integration": "vitest run integration",
     "lint": "tsc -b --pretty false",
-    "db:migrate": "tsc -b packages/db/tsconfig.json && node packages/db/dist/migrate-bin.js"
+    "db:migrate": "tsc -b packages/db/tsconfig.json && node packages/db/dist/migrate-bin.js",
+    "e2e": "node e2e/smoke.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
+    "pg": "^8.22.0",
     "typescript": "^5.7.0",
     "vitest": "^3.1.0"
   }

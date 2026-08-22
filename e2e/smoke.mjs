@@ -39,12 +39,11 @@ async function main() {
   // ── PHASE 1: Insert a task ──────────────────────────────────────────────
   console.log('═══ PHASE 1: Enqueue task ═══');
   const insertResult = await client.query(`
-    INSERT INTO tasks (external_id, description, repository_owner, repository_name, head_sha, policy_version, max_attempts)
-    VALUES ($1, $2, $3, $4, $5, $6, $7)
+    INSERT INTO tasks (external_id, repository_owner, repository_name, head_sha, policy_version, max_attempts)
+    VALUES ($1, $2, $3, $4, $5, $6)
     RETURNING id, status, available_at
   `, [
     `e2e-${Date.now()}`,
-    'E2E smoke test: verify full pipeline',
     'hermes-ops',
     'hermes-ops',
     '80ddaee10393eca8f5552e226ebef3675ad0d976',
@@ -81,8 +80,8 @@ async function main() {
   const evidenceResult = await client.query(`
     INSERT INTO evidence (
       evidence_identity, repository_owner, repository_name, head_sha,
-      policy_version, ci_conclusion, manifest_json
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7)
+      policy_version, manifest
+    ) VALUES ($1, $2, $3, $4, $5, $6)
     ON CONFLICT (evidence_identity) DO NOTHING
     RETURNING id
   `, [
@@ -91,7 +90,6 @@ async function main() {
     'hermes-ops',
     '80ddaee10393eca8f5552e226ebef3675ad0d976',
     '0.1.0',
-    'success',
     JSON.stringify({
       schemaVersion: '1.0',
       evidenceIdentity,
@@ -108,30 +106,29 @@ async function main() {
   // ── PHASE 4: Insert audit event ─────────────────────────────────────────
   console.log('\n═══ PHASE 4: Audit trail ═══');
   await client.query(`
-    INSERT INTO audit_events (task_id, event_type, payload)
-    VALUES ($1, $2, $3)
-  `, [taskId, 'e2e_smoke_completed', JSON.stringify({ workerId, outcome: 'pass' })]);
+    INSERT INTO audit_events (task_id, actor, action, detail)
+    VALUES ($1, $2, $3, $4)
+  `, [taskId, 'e2e-smoke', 'completed', JSON.stringify({ workerId, outcome: 'pass' })]);
   step('Audit event recorded', true);
 
-  // ── PHASE 5: Mark task done ─────────────────────────────────────────────
+  // ── PHASE 5: Mark task completed ────────────────────────────────────────
   console.log('\n═══ PHASE 5: Complete task ═══');
   const completeResult = await client.query(`
     UPDATE tasks
-    SET status = 'done', locked_at = NULL, locked_by = NULL, updated_at = now()
+    SET status = 'completed', locked_at = NULL, locked_by = NULL, updated_at = now()
     WHERE id = $1 RETURNING id, status
   `, [taskId]);
-  step('Task completed', completeResult.rows[0]?.status === 'done', `status=${completeResult.rows[0]?.status}`);
+  step('Task completed', completeResult.rows[0]?.status === 'completed', `status=${completeResult.rows[0]?.status}`);
 
   // ── PHASE 6: Stale-lock recovery test ───────────────────────────────────
   console.log('\n═══ PHASE 6: Stale-lock recovery ═══');
   // Insert a task, claim it, simulate crash by leaving it locked
   const staleResult = await client.query(`
-    INSERT INTO tasks (external_id, description, repository_owner, repository_name, head_sha, policy_version, max_attempts)
-    VALUES ($1, $2, $3, $4, $5, $6, $7)
+    INSERT INTO tasks (external_id, repository_owner, repository_name, head_sha, policy_version, max_attempts)
+    VALUES ($1, $2, $3, $4, $5, $6)
     RETURNING id
   `, [
     `e2e-stale-${Date.now()}`,
-    'Stale lock recovery test',
     'hermes-ops', 'hermes-ops',
     '80ddaee10393eca8f5552e226ebef3675ad0d976',
     '0.1.0', 5,
@@ -165,11 +162,20 @@ async function main() {
 
   // ── PHASE 7: Verify agent_runs table ────────────────────────────────────
   console.log('\n═══ PHASE 7: Agent runs ═══');
-  const agentResult = await client.query(`
-    INSERT INTO agent_runs (task_id, provider, external_run_id, model, status)
-    VALUES ($1, $2, $3, $4, $5)
+  // First create a job linked to the task
+  const jobResult = await client.query(`
+    INSERT INTO jobs (task_id, kind) VALUES ($1, $2)
     RETURNING id
-  `, [taskId, 'e2e-smoke', `run-${Date.now()}`, 'e2e-test', 'completed']);
+  `, [taskId, 'e2e-smoke-job']);
+  const jobId = jobResult.rows[0].id;
+  step('Job created', !!jobId, `id=${jobId}`);
+
+  // Then create an agent run linked to the job
+  const agentResult = await client.query(`
+    INSERT INTO agent_runs (job_id, provider, external_run_id, status)
+    VALUES ($1, $2, $3, $4)
+    RETURNING id
+  `, [jobId, 'e2e-smoke', `run-${Date.now()}`, 'succeeded']);
   step('Agent run recorded', agentResult.rowCount > 0, `id=${agentResult.rows[0].id}`);
 
   // ── SUMMARY ─────────────────────────────────────────────────────────────

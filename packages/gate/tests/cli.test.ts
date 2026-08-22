@@ -391,7 +391,94 @@ describe('hermes-policy-gate — exit code summary', () => {
   });
 });
 
-// Clean up the temp dir after the suite. Vitest runs this after all tests.
+describe('hermes-policy-gate — post-diff risk with --changed-files', () => {
+  it('passes with --changed-files that do not touch sensitive paths', () => {
+    const p = writeManifest('changed-ok.json', validManifest());
+    const r = run([
+      '--manifest', p,
+      '--head-sha', HEAD_SHA,
+      '--policy-version', POLICY_VERSION,
+      '--changed-files', 'src/index.ts,README.md',
+    ]);
+    expect(r.status).toBe(0);
+    const out = parseJson(r.stdout) as Record<string, unknown>;
+    expect(out['decision']).toBe('pass');
+  });
+
+  it('requires human approval when --changed-files touch auth-sensitive paths', () => {
+    const p = writeManifest('changed-auth.json', validManifest());
+    const r = run([
+      '--manifest', p,
+      '--head-sha', HEAD_SHA,
+      '--policy-version', POLICY_VERSION,
+      '--changed-files', 'src/auth/login.ts,README.md',
+    ]);
+    expect(r.status).toBe(1);
+    const out = parseJson(r.stdout) as Record<string, unknown>;
+    expect(out['decision']).toBe('fail');
+    expect(out['reasonCode']).toBe('HUMAN_APPROVAL_REQUIRED');
+  });
+
+  it('approval token overrides human-required from post-diff risk', () => {
+    const p = writeManifest('changed-approved.json', validManifest());
+    const token = JSON.stringify({ signedAt: '2026-01-01T00:00:00Z', approver: 'test', reason: 'test', signature: 'sig' });
+    const r = run([
+      '--manifest', p,
+      '--head-sha', HEAD_SHA,
+      '--policy-version', POLICY_VERSION,
+      '--changed-files', 'src/auth/login.ts',
+      '--approval', token,
+    ]);
+    expect(r.status).toBe(0);
+    const out = parseJson(r.stdout) as Record<string, unknown>;
+    expect(out['decision']).toBe('pass');
+  });
+
+  it('--changed-files with credential path also requires human approval', () => {
+    const p = writeManifest('changed-cred.json', validManifest());
+    const r = run([
+      '--manifest', p,
+      '--head-sha', HEAD_SHA,
+      '--policy-version', POLICY_VERSION,
+      '--changed-files', 'config/secrets.yaml',
+    ]);
+    expect(r.status).toBe(1);
+    const out = parseJson(r.stdout) as Record<string, unknown>;
+    expect(out['reasonCode']).toBe('HUMAN_APPROVAL_REQUIRED');
+  });
+
+  it('--changed-files is optional — not passing it still works', () => {
+      const p = writeManifest('changed-none.json', validManifest());
+      const r = run(['--manifest', p, '--head-sha', HEAD_SHA, '--policy-version', POLICY_VERSION]);
+      expect(r.status).toBe(0);
+      expect(r.stdout).toContain('"pass"');
+    });
+  });
+
+  describe('hermes-policy-gate --help', () => {
+    it('prints usage and exits 0 when --help is passed', () => {
+      const r = run(['--help']);
+      expect(r.status).toBe(0);
+      expect(r.stdout).toContain('usage:');
+      expect(r.stdout).toContain('--manifest');
+      expect(r.stdout).toContain('--head-sha');
+      expect(r.stdout).toContain('Exit codes');
+    });
+
+    it('prints usage and exits 0 without other required flags', () => {
+      const r = run(['--help']);
+      expect(r.status).toBe(0);
+      expect(r.stderr).toBe('');
+    });
+
+    it('--help works with other args too', () => {
+      const r = run(['--manifest', 'x.json', '--help', '--head-sha', HEAD_SHA, '--policy-version', POLICY_VERSION]);
+      expect(r.status).toBe(0);
+      expect(r.stdout).toContain('usage:');
+    });
+  });
+
+  // Clean up the temp dir after the suite. Vitest runs this after all tests.
 afterAll(() => {
   if (workDir) {
     rmSync(workDir, { recursive: true, force: true });

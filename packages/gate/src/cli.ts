@@ -33,12 +33,24 @@ const KNOWN_FLAGS = [
   '--output',
   '--approval',
   '--changed-files',
+  '--help',
 ] as const;
 type KnownFlag = (typeof KNOWN_FLAGS)[number];
 
 const USAGE =
   'usage: hermes-policy-gate --manifest <file.json> --head-sha <40-lowercase-hex> ' +
-  '--policy-version <semver> [--output <file.json>] [--changed-files <file1,file2,...>]';
+  '--policy-version <semver> [--output <file.json>] [--changed-files <file1,file2,...>]\n' +
+  '\n' +
+  'Options:\n' +
+  '  --manifest <file>        Path to the evidence manifest JSON file (required)\n' +
+  '  --head-sha <sha>         Expected 40-character lowercase hex HEAD SHA (required)\n' +
+  '  --policy-version <sem>  Semver policy version (required)\n' +
+  '  --output <file>          Path to write the result JSON (default: stdout)\n' +
+  '  --approval <json>        Human approval token JSON {signedAt, approver, reason, signature}\n' +
+  '  --changed-files <list>   Comma-separated list of changed file paths for post-diff risk\n' +
+  '  --help                   Show this help message and exit\n' +
+  '\n' +
+  'Exit codes: 0=PASS, 1=FAIL, 2=USAGE_ERROR';
 
 /** Injectable filesystem + stdio surface so the CLI logic is testable. */
 export interface CliIo {
@@ -215,6 +227,13 @@ const writeResult = (io: CliIo, outputPath: string | undefined, json: string): v
  * Never throws — all errors are mapped to an exit code and a safe stderr line.
  */
 export const runCli = (argv: readonly string[], io: CliIo): number => {
+  // Check for --help before strict argv parsing so it works standalone.
+  if (argv.includes('--help') || argv.includes('--help=true')) {
+    io.stdout.write(USAGE);
+    io.stdout.write('\n');
+    return 0;
+  }
+
   let opts: CliOptions;
   try {
     opts = parseArgs(argv);
