@@ -1,0 +1,21 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-08-23T030522Z-80ddaee",
+  "purpose": "This packet would be sent to OpenAI Responses API for independent review. Contains deterministic evidence and Hermes analysis only — no secrets, no raw source code.",
+  "snapshot": {
+    "project": "hermes-ops",
+    "commit": "80ddaee10393eca8f5552e226ebef3675ad0d976",
+    "branch": "main",
+    "dirty": true,
+    "design_sha256": "d50915eaa2713bfb889cfc0b5ec24b6f386d159a3214fe4db5ca3b99281a9214"
+  },
+  "repository_evidence": "See .hermes/reviews/2026-08-23T030522Z-80ddaee/repo-evidence.json (not inlined to keep packet size bounded)",
+  "hermes_analysis": "See .hermes/reviews/2026-08-23T030522Z-80ddaee/hermes-analysis.md",
+  "implementation_matrix": "See .hermes/reviews/2026-08-23T030522Z-80ddaee/implementation-matrix.json",
+  "security": {
+    "source_files_included": false,
+    "redaction_matches": 0,
+    "warning": "Sanitized but still potentially sensitive."
+  },
+  "packet_sha256": "PLACEHOLDER"
+}

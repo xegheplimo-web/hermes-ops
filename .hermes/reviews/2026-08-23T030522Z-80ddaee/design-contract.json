@@ -1,0 +1,24 @@
+{
+  "schema_version": "1.0",
+  "design_sha256": "d50915eaa2713bfb889cfc0b5ec24b6f386d159a3214fe4db5ca3b99281a9214",
+  "design_file": "C:\\Users\\atton\\Downloads\\deep-research-report (1).md",
+  "intended_architecture": "Hermes skill project-review-orchestrator: evidence → analysis → redaction → external review → reconcile → codemap → task DAG → Ops DB → DevinAdapter → Devin → PR → CI → policy-gate → PASS/REPAIR",
+  "intended_components": [
+    {"id": "C-01", "name": "EvidenceManifest v1 contracts", "package": "packages/contracts", "required": true},
+    {"id": "C-02", "name": "Policy evaluator", "package": "packages/policy", "required": true},
+    {"id": "C-03", "name": "PostgreSQL schema + queue", "package": "packages/db", "required": true},
+    {"id": "C-04", "name": "Adapters (GitHub, CodeRabbit, Devin, coding-agent)", "package": "packages/adapters", "required": true},
+    {"id": "C-05", "name": "Policy gate CLI", "package": "packages/gate", "required": true},
+    {"id": "C-06", "name": "Evidence collection scripts", "path": "skills/software-development/project-review-orchestrator/scripts/", "required": true},
+    {"id": "C-07", "name": "SKILL.md with procedure", "path": "skills/software-development/project-review-orchestrator/SKILL.md", "required": true},
+    {"id": "C-08", "name": "Review templates", "path": "skills/software-development/project-review-orchestrator/templates/", "required": true},
+    {"id": "C-09", "name": "Reference docs", "path": "skills/software-development/project-review-orchestrator/references/", "required": true},
+    {"id": "C-10", "name": "GitHub CI workflow", "path": ".github/workflows/ci.yml", "required": true},
+    {"id": "C-11", "name": "GitHub remote + PR flow", "path": null, "required": true, "blocker": "no remote configured"},
+    {"id": "C-12", "name": "Integration tests with live DB", "path": "packages/db/tests/queue.integration.test.ts", "required": false, "note": "5 skipped, need Docker running"},
+    {"id": "C-13", "name": "DB migrations applied", "path": null, "required": true, "blocker": "PostgreSQL running but migrations not yet applied"},
+    {"id": "C-14", "name": "E2E vertical slice", "path": null, "required": true, "note": "W1-8 from Wave plan: change → DB → agent → PR → CI → review → merge"},
+    {"id": "C-15", "name": "Human gate for critical actions", "path": null, "required": true, "note": "Not implemented yet"},
+    {"id": "C-16", "name": "AgentMemory integration", "path": null, "required": false, "note": "Deferred: iii-engine Docker exists but WSL required"}
+  ]
+}

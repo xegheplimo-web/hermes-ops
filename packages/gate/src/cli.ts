@@ -18,7 +18,10 @@
  * distinguishes the outcome.
  */
 
-import { evaluatePolicy, type PolicyResult } from '@hermes-ops/policy';
+import { evaluatePolicy, classifyFromPolicyResult, type PolicyResult } from '@hermes-ops/policy';
+import {
+  type HumanApprovalToken,
+} from './approval.js';
 
 const HEAD_SHA_RE = /^[0-9a-f]{40}$/;
 const SEMVER_RE = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
@@ -28,6 +31,7 @@ const KNOWN_FLAGS = [
   '--head-sha',
   '--policy-version',
   '--output',
+  '--approval',
 ] as const;
 type KnownFlag = (typeof KNOWN_FLAGS)[number];
 
@@ -54,6 +58,7 @@ export interface CliOptions {
   readonly headSha: string;
   readonly policyVersion: string;
   readonly outputPath?: string;
+  readonly approvalToken?: string;
 }
 
 /** Usage error: bad invocation. Maps to exit code 2. */
@@ -84,6 +89,7 @@ type MutableCliOptions = {
   headSha?: string;
   policyVersion?: string;
   outputPath?: string;
+  approvalToken?: string;
 };
 
 export const parseArgs = (argv: readonly string[]): CliOptions => {
@@ -144,6 +150,9 @@ const setFlag = (opts: MutableCliOptions, name: KnownFlag, value: string): void 
     case '--output':
       opts.outputPath = value;
       break;
+    case '--approval':
+      opts.approvalToken = value;
+      break;
   }
 };
 
@@ -160,21 +169,21 @@ export interface GateResultJson {
  * Project a {@link PolicyResult} into the stable JSON shape emitted by the CLI.
  * `evidenceIdentity` is included only when present; `manifest` is never included.
  */
-export const formatResult = (result: PolicyResult): GateResultJson => {
+export const formatResult = (result: { decision: string; reasonCode: string; policyVersion: string; evidenceIdentity?: string; detail: string }): GateResultJson => {
   // Fixed key order for stable serialization:
   //   decision, reasonCode, policyVersion, evidenceIdentity?, detail
   if (result.evidenceIdentity !== undefined) {
     return {
-      decision: result.decision,
-      reasonCode: result.reasonCode,
+      decision: result.decision as PolicyResult['decision'],
+      reasonCode: result.reasonCode as PolicyResult['reasonCode'],
       policyVersion: result.policyVersion,
       evidenceIdentity: result.evidenceIdentity,
       detail: result.detail,
     };
   }
   return {
-    decision: result.decision,
-    reasonCode: result.reasonCode,
+    decision: result.decision as PolicyResult['decision'],
+    reasonCode: result.reasonCode as PolicyResult['reasonCode'],
     policyVersion: result.policyVersion,
     detail: result.detail,
   };
@@ -183,6 +192,15 @@ export const formatResult = (result: PolicyResult): GateResultJson => {
 const safeError = (io: CliIo, message: string): void => {
   // Never echo secrets, file contents, or raw JSON here — only short messages.
   io.stderr.write(`${message}\n`);
+};
+
+/** Write result JSON to output (file or stdout). */
+const writeResult = (io: CliIo, outputPath: string | undefined, json: string): void => {
+  if (outputPath !== undefined) {
+    io.writeFileSync(outputPath, json, 'utf8');
+  } else {
+    io.stdout.write(json);
+  }
 };
 
 /**
@@ -245,6 +263,37 @@ export const runCli = (argv: readonly string[], io: CliIo): number => {
     expectedHeadSha: opts.headSha,
     policyVersion: opts.policyVersion,
   });
+
+  // Human approval gate: check if the risk class requires human approval.
+    const riskClass = classifyFromPolicyResult(result);
+    if (riskClass === 'human-required') {
+    if (opts.approvalToken === undefined) {
+      // No token → block with HUMAN_APPROVAL_REQUIRED.
+      const blocked = {
+        decision: 'fail',
+        reasonCode: 'HUMAN_APPROVAL_REQUIRED',
+        policyVersion: opts.policyVersion,
+        detail: `human approval required for risk class: ${riskClass}`,
+      };
+      writeResult(io, opts.outputPath, `${JSON.stringify(formatResult(blocked), null, 2)}\n`);
+      return 1;
+    }
+    // Parse and validate the approval token.
+    let token: HumanApprovalToken;
+    try {
+      token = JSON.parse(opts.approvalToken);
+    } catch {
+      safeError(io, USAGE);
+      safeError(io, '--approval must be valid JSON');
+      return 2;
+    }
+    if (!token.signedAt || !token.approver || !token.reason || !token.signature) {
+      safeError(io, USAGE);
+      safeError(io, '--approval must be a valid JSON token with signedAt, approver, reason, and signature');
+      return 2;
+    }
+    // Token is valid — proceed with the original evaluation result.
+  }
 
   const json = `${JSON.stringify(formatResult(result), null, 2)}\n`;
 

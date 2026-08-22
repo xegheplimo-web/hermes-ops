@@ -1,0 +1,99 @@
+{
+  "schema_version": "1.0",
+  "run_id": "2026-08-23T030522Z-80ddaee",
+  "reconciliation_rule": "Hermes evidence outranks model opinion. Repository/runtime evidence trumps documentation. Every finding disposition is based on repository evidence, not voting.",
+  "dispositions": [
+    {
+      "finding_id": "EXT-001",
+      "hermes_position": "MISSING — confirmed by source inspection. No E2E infrastructure exists.",
+      "external_claim": "MISSING",
+      "final_disposition": "AGREE",
+      "final_severity": "critical",
+      "confidence": 0.9,
+      "evidence_refs": ["C-14", "repo-evidence.json", "STATUS-2026-08-21"],
+      "rationale": "Hermes independently identified this. External reviewer confirmed.",
+      "task_candidate": true
+    },
+    {
+      "finding_id": "EXT-002",
+      "hermes_position": "BLOCKED — git remote -v returns empty. Confirmed by terminal output.",
+      "external_claim": "BLOCKED",
+      "final_disposition": "AGREE",
+      "final_severity": "high",
+      "confidence": 0.95,
+      "evidence_refs": ["C-11", "CANONICAL_PROJECT_SELECTION.md"],
+      "rationale": "No remote = no PR/CI/GitHub. Requires human action.",
+      "task_candidate": false,
+      "human_required": true
+    },
+    {
+      "finding_id": "EXT-003",
+      "hermes_position": "BLOCKED — Docker daemon stopped. Container not running. Terminal confirmed docker ps fails.",
+      "external_claim": "BLOCKED",
+      "final_disposition": "AGREE",
+      "final_severity": "high",
+      "confidence": 0.9,
+      "evidence_refs": ["C-13", "terminal output"],
+      "rationale": "Docker must start, then migrations can run.",
+      "task_candidate": true
+    },
+    {
+      "finding_id": "EXT-004",
+      "hermes_position": "MISSING — No human gate code exists in any package.",
+      "external_claim": "MISSING",
+      "final_disposition": "AGREE",
+      "final_severity": "high",
+      "confidence": 0.85,
+      "evidence_refs": ["C-15", "packages/*/src/*.ts"],
+      "rationale": "Design requires human gate for critical. Not implemented.",
+      "task_candidate": true
+    },
+    {
+      "finding_id": "EXT-005",
+      "hermes_position": "AGREE — 310 tests pass, build clean, architecture matches design.",
+      "external_claim": "AGREE",
+      "final_disposition": "AGREE",
+      "final_severity": "low",
+      "confidence": 0.95,
+      "evidence_refs": ["C-01 through C-10", "pnpm test exit 0", "pnpm build exit 0"],
+      "rationale": "Both agree no action needed on core packages.",
+      "task_candidate": false
+    },
+    {
+      "finding_id": "EXT-006",
+      "hermes_position": "PARTIAL — openai_review.py exists and is well-structured. Needs API key to run.",
+      "external_claim": "PARTIAL",
+      "final_disposition": "AGREE",
+      "final_severity": "medium",
+      "confidence": 0.9,
+      "evidence_refs": ["C-06", "skills/.../scripts/openai_review.py"],
+      "rationale": "Script is complete, just requires runtime secret.",
+      "task_candidate": false
+    },
+    {
+      "finding_id": "EXT-007",
+      "hermes_position": "MISSING — not implemented in any package.",
+      "external_claim": "MISSING",
+      "final_disposition": "AGREE",
+      "final_severity": "medium",
+      "confidence": 0.8,
+      "evidence_refs": ["C-18"],
+      "rationale": "Post-diff risk recalc is required by design. Not implemented.",
+      "task_candidate": true
+    },
+    {
+      "finding_id": "EXT-008",
+      "hermes_position": "PARTIAL — policy evaluator exists but simplified routing not coded.",
+      "external_claim": "PARTIAL",
+      "final_disposition": "AGREE",
+      "final_severity": "medium",
+      "confidence": 0.7,
+      "evidence_refs": ["C-17", "packages/policy/src/evaluator.ts"],
+      "rationale": "evaluator.ts has the infrastructure; just needs the routing layer.",
+      "task_candidate": true
+    }
+  ],
+  "actionable_tasks": ["EXT-001", "EXT-003", "EXT-004", "EXT-007", "EXT-008"],
+  "human_blocked": ["EXT-002"],
+  "no_action": ["EXT-005", "EXT-006"]
+}

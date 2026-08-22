@@ -1,0 +1,408 @@
+{
+  "schema_version": "1.0",
+  "generated_at": "2026-08-20T22:37:38+00:00",
+  "repository": {
+    "root_name": "hermes-ops",
+    "branch": "main",
+    "commit_sha": "80ddaee10393eca8f5552e226ebef3675ad0d976",
+    "dirty": true,
+    "changed_entry_count": 1273,
+    "changed_entries": [
+      " M packages/adapters/tsconfig.tsbuildinfo",
+      "?? .pgdata/PG_VERSION",
+      "?? .pgdata/base/1/112",
+      "?? .pgdata/base/1/113",
+      "?? .pgdata/base/1/1247",
+      "?? .pgdata/base/1/1247_fsm",
+      "?? .pgdata/base/1/1247_vm",
+      "?? .pgdata/base/1/1249",
+      "?? .pgdata/base/1/1249_fsm",
+      "?? .pgdata/base/1/1249_vm",
+      "?? .pgdata/base/1/1255",
+      "?? .pgdata/base/1/1255_fsm",
+      "?? .pgdata/base/1/1255_vm",
+      "?? .pgdata/base/1/1259",
+      "?? .pgdata/base/1/1259_fsm",
+      "?? .pgdata/base/1/1259_vm",
+      "?? .pgdata/base/1/13494",
+      "?? .pgdata/base/1/13494_fsm",
+      "?? .pgdata/base/1/13494_vm",
+      "?? .pgdata/base/1/13497",
+      "?? .pgdata/base/1/13498",
+      "?? .pgdata/base/1/13499",
+      "?? .pgdata/base/1/13499_fsm",
+      "?? .pgdata/base/1/13499_vm",
+      "?? .pgdata/base/1/13502",
+      "?? .pgdata/base/1/13503",
+      "?? .pgdata/base/1/13504",
+      "?? .pgdata/base/1/13504_fsm",
+      "?? .pgdata/base/1/13504_vm",
+      "?? .pgdata/base/1/13507",
+      "?? .pgdata/base/1/13508",
+      "?? .pgdata/base/1/13509",
+      "?? .pgdata/base/1/13509_fsm",
+      "?? .pgdata/base/1/13509_vm",
+      "?? .pgdata/base/1/13512",
+      "?? .pgdata/base/1/13513",
+      "?? .pgdata/base/1/1417",
+      "?? .pgdata/base/1/1418",
+      "?? .pgdata/base/1/174",
+      "?? .pgdata/base/1/175",
+      "?? .pgdata/base/1/2187",
+      "?? .pgdata/base/1/2224",
+      "?? .pgdata/base/1/2228",
+      "?? .pgdata/base/1/2328",
+      "?? .pgdata/base/1/2336",
+      "?? .pgdata/base/1/2337",
+      "?? .pgdata/base/1/2579",
+      "?? .pgdata/base/1/2600",
+      "?? .pgdata/base/1/2600_fsm",
+      "?? .pgdata/base/1/2600_vm",
+      "?? .pgdata/base/1/2601",
+      "?? .pgdata/base/1/2601_fsm",
+      "?? .pgdata/base/1/2601_vm",
+      "?? .pgdata/base/1/2602",
+      "?? .pgdata/base/1/2602_fsm",
+      "?? .pgdata/base/1/2602_vm",
+      "?? .pgdata/base/1/2603",
+      "?? .pgdata/base/1/2603_fsm",
+      "?? .pgdata/base/1/2603_vm",
+      "?? .pgdata/base/1/2604",
+      "?? .pgdata/base/1/2605",
+      "?? .pgdata/base/1/2605_fsm",
+      "?? .pgdata/base/1/2605_vm",
+      "?? .pgdata/base/1/2606",
+      "?? .pgdata/base/1/2606_fsm",
+      "?? .pgdata/base/1/2606_vm",
+      "?? .pgdata/base/1/2607",
+      "?? .pgdata/base/1/2607_fsm",
+      "?? .pgdata/base/1/2607_vm",
+      "?? .pgdata/base/1/2608",
+      "?? .pgdata/base/1/2608_fsm",
+      "?? .pgdata/base/1/2608_vm",
+      "?? .pgdata/base/1/2609",
+      "?? .pgdata/base/1/2609_fsm",
+      "?? .pgdata/base/1/2609_vm",
+      "?? .pgdata/base/1/2610",
+      "?? .pgdata/base/1/2610_fsm",
+      "?? .pgdata/base/1/2610_vm",
+      "?? .pgdata/base/1/2611",
+      "?? .pgdata/base/1/2612",
+      "?? .pgdata/base/1/2612_fsm",
+      "?? .pgdata/base/1/2612_vm",
+      "?? .pgdata/base/1/2613",
+      "?? .pgdata/base/1/2615",
+      "?? .pgdata/base/1/2615_fsm",
+      "?? .pgdata/base/1/2615_vm",
+      "?? .pgdata/base/1/2616",
+      "?? .pgdata/base/1/2616_fsm",
+      "?? .pgdata/base/1/2616_vm",
+      "?? .pgdata/base/1/2617",
+      "?? .pgdata/base/1/2617_fsm",
+      "?? .pgdata/base/1/2617_vm",
+      "?? .pgdata/base/1/2618",
+      "?? .pgdata/base/1/2618_fsm",
+      "?? .pgdata/base/1/2618_vm",
+      "?? .pgdata/base/1/2619",
+      "?? .pgdata/base/1/2619_fsm",
+      "?? .pgdata/base/1/2619_vm",
+      "?? .pgdata/base/1/2620",
+      "?? .pgdata/base/1/2650"
+    ]
+  },
+  "files": {
+    "tracked_count": 79,
+    "safe_scanned_count": 78,
+    "tracked_bytes_safe": 584346,
+    "languages_by_file": {
+      "TypeScript": 35,
+      "Markdown": 13,
+      "JSON": 13,
+      "Other": 6,
+      "SQL": 5,
+      "YAML": 3,
+      "Python": 3
+    },
+    "languages_by_bytes": {
+      "TypeScript": 239584,
+      "Other": 193159,
+      "Markdown": 81372,
+      "YAML": 36753,
+      "Python": 19975,
+      "SQL": 8719,
+      "JSON": 4784
+    }
+  },
+  "project_structure": {
+    "manifests": [
+      "package.json",
+      "packages/adapters/package.json",
+      "packages/contracts/package.json",
+      "packages/db/package.json",
+      "packages/gate/package.json",
+      "packages/policy/package.json",
+      "pnpm-lock.yaml"
+    ],
+    "test_file_count": 13,
+    "test_files_sample": [
+      "packages/adapters/tests/coderabbit.test.ts",
+      "packages/adapters/tests/coding-agent.test.ts",
+      "packages/adapters/tests/devin.test.ts",
+      "packages/adapters/tests/github.test.ts",
+      "packages/contracts/tests/manifest.test.ts",
+      "packages/db/tests/agent-runs.test.ts",
+      "packages/db/tests/migrate.test.ts",
+      "packages/db/tests/migrations.test.ts",
+      "packages/db/tests/queue-sql.test.ts",
+      "packages/db/tests/queue.integration.test.ts",
+      "packages/db/tests/recovery.test.ts",
+      "packages/gate/tests/cli.test.ts",
+      "packages/policy/tests/evaluator.test.ts"
+    ],
+    "ci_files": [
+      ".github/workflows/ci.yml"
+    ],
+    "security_sensitive_paths_sample": [
+      "packages/policy/package.json",
+      "packages/policy/src/evaluator.ts",
+      "packages/policy/src/index.ts",
+      "packages/policy/tests/evaluator.test.ts",
+      "packages/policy/tsconfig.json",
+      "packages/policy/tsconfig.tsbuildinfo"
+    ]
+  },
+  "maintenance": {
+    "todo_markers": {
+      "FIXME": 1,
+      "HACK": 1,
+      "TODO": 3,
+      "XXX": 1
+    },
+    "recent_commits": [
+      {
+        "sha": "80ddaee10393eca8f5552e226ebef3675ad0d976",
+        "date": "2026-08-20T15:05:47+07:00",
+        "author": "Hermes Agent",
+        "subject": "feat(skills): add project-review-orchestrator skill"
+      },
+      {
+        "sha": "066070a6bcc74d1cadf59530ab922934c59e55c5",
+        "date": "2026-08-20T13:41:01+07:00",
+        "author": "Hermes Agent",
+        "subject": "ci: add GitHub Actions workflow + .env.example"
+      },
+      {
+        "sha": "c69030ef86ed8f0e4ff7fd39c6479bcd8341b026",
+        "date": "2026-08-20T13:37:22+07:00",
+        "author": "Hermes Agent",
+        "subject": "feat(adapters): add DevinCliTransport — real CLI transport"
+      },
+      {
+        "sha": "2d7d5510f1be57328e39026cf664256ef85fb289",
+        "date": "2026-08-20T02:33:32+07:00",
+        "author": "Hermes Agent",
+        "subject": "fix(db): stop writing NULL to NOT NULL available_at in claim SQL; add live-Postgres queue integration tests"
+      },
+      {
+        "sha": "3a418f5d4ef220629e3864c17782bb18116708e1",
+        "date": "2026-08-20T02:14:06+07:00",
+        "author": "Hermes Agent",
+        "subject": "feat(db): migration runner with sha256 checksum verification + schema_migrations bookkeeping"
+      },
+      {
+        "sha": "4727bc6a5c5c903a9d097e9e0814d1893b7550b1",
+        "date": "2026-08-20T01:55:20+07:00",
+        "author": "Hermes Agent",
+        "subject": "docs(plans): verified status report + Wave 1 revised after Codex principal review"
+      },
+      {
+        "sha": "6a42f08d9b66bf1bc3248cdb0c1d22a3b89a0f04",
+        "date": "2026-08-20T01:33:41+07:00",
+        "author": "Hermes Agent",
+        "subject": "feat: hermes-ops P0 foundation (contracts, policy, db, adapters, gate)"
+      }
+    ],
+    "top_churn_90_days": [
+      {
+        "path": "pnpm-lock.yaml",
+        "added": 1168,
+        "deleted": 1,
+        "churn": 1169
+      },
+      {
+        "path": ".hermes/plans/2026-08-20-agent-fleet-p0-completion.md",
+        "added": 724,
+        "deleted": 0,
+        "churn": 724
+      },
+      {
+        "path": "packages/adapters/tests/devin.test.ts",
+        "added": 586,
+        "deleted": 0,
+        "churn": 586
+      },
+      {
+        "path": "skills/software-development/project-review-orchestrator/SKILL.md",
+        "added": 520,
+        "deleted": 0,
+        "churn": 520
+      },
+      {
+        "path": "packages/contracts/src/validation.ts",
+        "added": 473,
+        "deleted": 0,
+        "churn": 473
+      },
+      {
+        "path": "packages/db/tests/queue.integration.test.ts",
+        "added": 400,
+        "deleted": 0,
+        "churn": 400
+      },
+      {
+        "path": "packages/db/src/queue.ts",
+        "added": 396,
+        "deleted": 3,
+        "churn": 399
+      },
+      {
+        "path": "packages/gate/tests/cli.test.ts",
+        "added": 397,
+        "deleted": 0,
+        "churn": 397
+      },
+      {
+        "path": "packages/adapters/src/devin.ts",
+        "added": 388,
+        "deleted": 0,
+        "churn": 388
+      },
+      {
+        "path": "packages/db/tests/migrate.test.ts",
+        "added": 363,
+        "deleted": 0,
+        "churn": 363
+      },
+      {
+        "path": "skills/software-development/project-review-orchestrator/scripts/collect_repo_evidence.py",
+        "added": 329,
+        "deleted": 0,
+        "churn": 329
+      },
+      {
+        "path": "packages/contracts/tests/manifest.test.ts",
+        "added": 313,
+        "deleted": 0,
+        "churn": 313
+      },
+      {
+        "path": "packages/gate/src/cli.ts",
+        "added": 273,
+        "deleted": 0,
+        "churn": 273
+      },
+      {
+        "path": "packages/adapters/src/coding-agent.ts",
+        "added": 267,
+        "deleted": 0,
+        "churn": 267
+      },
+      {
+        "path": "README.md",
+        "added": 244,
+        "deleted": 0,
+        "churn": 244
+      },
+      {
+        "path": "packages/adapters/src/devin-cli-transport.ts",
+        "added": 242,
+        "deleted": 0,
+        "churn": 242
+      },
+      {
+        "path": "packages/policy/tests/evaluator.test.ts",
+        "added": 215,
+        "deleted": 0,
+        "churn": 215
+      },
+      {
+        "path": "packages/adapters/tests/github.test.ts",
+        "added": 212,
+        "deleted": 0,
+        "churn": 212
+      },
+      {
+        "path": "packages/adapters/src/coderabbit.ts",
+        "added": 206,
+        "deleted": 0,
+        "churn": 206
+      },
+      {
+        "path": "packages/adapters/src/github.ts",
+        "added": 193,
+        "deleted": 0,
+        "churn": 193
+      },
+      {
+        "path": "packages/db/tests/recovery.test.ts",
+        "added": 191,
+        "deleted": 0,
+        "churn": 191
+      },
+      {
+        "path": ".hermes/plans/2026-08-21-verified-status-and-next-plan.md",
+        "added": 189,
+        "deleted": 0,
+        "churn": 189
+      },
+      {
+        "path": "packages/adapters/tests/coderabbit.test.ts",
+        "added": 186,
+        "deleted": 0,
+        "churn": 186
+      },
+      {
+        "path": "packages/db/src/schema.ts",
+        "added": 186,
+        "deleted": 0,
+        "churn": 186
+      },
+      {
+        "path": "packages/db/tests/migrations.test.ts",
+        "added": 176,
+        "deleted": 0,
+        "churn": 176
+      },
+      {
+        "path": "packages/policy/src/evaluator.ts",
+        "added": 175,
+        "deleted": 0,
+        "churn": 175
+      },
+      {
+        "path": "packages/db/src/migrate.ts",
+        "added": 167,
+        "deleted": 0,
+        "churn": 167
+      },
+      {
+        "path": "packages/db/tests/queue-sql.test.ts",
+        "added": 157,
+        "deleted": 3,
+        "churn": 160
+      },
+      {
+        "path": "skills/software-development/project-review-orchestrator/scripts/openai_review.py",
+        "added": 122,
+        "deleted": 0,
+        "churn": 122
+      },
+      {
+        "path": "packages/contracts/src/manifest.ts",
+        "added": 122,
+        "deleted": 0,
+        "churn": 122
+      }
+    ]
+  }
+}

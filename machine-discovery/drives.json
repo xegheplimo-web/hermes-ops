@@ -1,0 +1,60 @@
+{
+  "schema_version": "1.0",
+  "generated_at": "2026-08-23T03:05:22+07:00",
+  "description": "Windows drive enumeration for project discovery",
+  "drives": [
+    {
+      "letter": "A",
+      "label": null,
+      "filesystem": "ntfs",
+      "total_size_gb": 604,
+      "used_gb": 36,
+      "free_gb": 569,
+      "access": "ok",
+      "development_relevant": true,
+      "notes": "Contains xiengi-web (game), PyAI — not relevant to hermes-ops"
+    },
+    {
+      "letter": "C",
+      "label": null,
+      "filesystem": "ntfs",
+      "total_size_gb": 1843,
+      "used_gb": 192,
+      "free_gb": 1651,
+      "access": "ok",
+      "development_relevant": true,
+      "notes": "System drive. User home at C:\\Users\\atton. Contains Hermes config, Worktree dirs"
+    },
+    {
+      "letter": "D",
+      "label": null,
+      "filesystem": "ntfs",
+      "total_size_gb": 977,
+      "used_gb": 168,
+      "free_gb": 809,
+      "access": "ok",
+      "development_relevant": true,
+      "notes": "Data drive. Contains FaceCraft-VN, FaceCraft-Cloud, MusicGen — separate projects from hermes-ops"
+    },
+    {
+      "letter": "G",
+      "label": null,
+      "filesystem": "ntfs",
+      "total_size_gb": 933,
+      "used_gb": 119,
+      "free_gb": 815,
+      "access": "ok",
+      "development_relevant": true,
+      "notes": "Primary development drive. Contains Agent-Tools/hermes-ops, AGENT-CODE/agentmemory-main, Understand-Anything"
+    }
+  ],
+  "inaccessible_drives": [],
+  "skipped_locations": [
+    "Windows system dirs (C:\\Windows, C:\\Program Files, C:\\ProgramData)",
+    "Recycle bins",
+    "AppData caches and temp",
+    "node_modules, .venv, dist, build",
+    "Credential stores, browser profiles",
+    "Docker/WSL virtual disks"
+  ]
+}

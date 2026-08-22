@@ -1,0 +1,27 @@
+{
+  "run_id": "2026-08-23T030522Z-80ddaee",
+  "generated_at": "2026-08-23T03:05:22+07:00",
+  "project": "hermes-ops",
+  "repository_root": "G:\\Agent-Tools\\hermes-ops",
+  "branch": "main",
+  "head_sha": "80ddaee10393eca8f5552e226ebef3675ad0d976",
+  "head_short": "80ddaee10",
+  "dirty": true,
+  "dirty_details": "Untracked: .pgdata/* (PostgreSQL data dir), __pycache__/* (Python bytecode), tsconfig.tsbuildinfo (TypeScript build info). Changed: packages/adapters/tsconfig.tsbuildinfo (M). None are source changes.",
+  "design_document": "C:\\Users\\atton\\Downloads\\deep-research-report (1).md",
+  "design_sha256": "d50915eaa2713bfb889cfc0b5ec24b6f386d159a3214fe4db5ca3b99281a9214",
+  "design_size_bytes": 81004,
+  "design_modified": "2026-08-21T05:41:00+07:00",
+  "review_mode": "openai-api",
+  "objective": "Audit hermes-ops project against full design specification, identify gaps, create execution DAG, and drive to completion",
+  "state": "PLANNING",
+  "owner": "Hermes",
+  "evidence_artifacts": [
+    "machine-discovery/drives.json",
+    "machine-discovery/repository-candidates.json",
+    "PROJECT_CANDIDATE_MATRIX.md",
+    "CANONICAL_PROJECT_SELECTION.md",
+    ".hermes/reviews/20260823T030000Z_80ddaee/repo-evidence.json",
+    ".hermes/reviews/20260823T030000Z_80ddaee/repo-evidence.md"
+  ]
+}

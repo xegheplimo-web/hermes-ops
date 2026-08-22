@@ -1,0 +1,72 @@
+{
+  "schema_version": "1.0",
+  "generated_at": "2026-08-23T03:05:22+07:00",
+  "candidates": [
+    {
+      "id": "REPO-A",
+      "name": "hermes-ops",
+      "path": "G:\\Agent-Tools\\hermes-ops",
+      "git": true,
+      "branch": "main",
+      "head": "80ddaee10393eca8f5552e226ebef3675ad0d976",
+      "dirty": true,
+      "changed_entries": 5,
+      "files_count": 79,
+      "remote": null,
+      "last_commit": "2026-08-20T15:05:47+07:00",
+      "last_10_commits": [
+        "feat(skills): add project-review-orchestrator skill",
+        "ci: add GitHub Actions workflow + .env.example",
+        "feat(adapters): add DevinCliTransport — real CLI transport",
+        "fix(db): stop writing NULL to NOT NULL available_at in claim SQL; add live-Postgres queue integration tests",
+        "feat(db): migration runner with sha256 checksum verification + schema_migrations bookkeeping",
+        "docs(plans): verified status report + Wave 1 revised after Codex principal review",
+        "feat: hermes-ops P0 foundation (contracts, policy, db, adapters, gate)"
+      ],
+      "test_count": 13,
+      "tests_pass": 310,
+      "tests_skip": 5,
+      "build_pass": true,
+      "packages": ["contracts", "policy", "db", "adapters", "gate"],
+      "has_skills": true,
+      "has_hermes_dir": true,
+      "has_github_workflows": true,
+      "has_docker_compose": true,
+      "has_review_evidence": true
+    },
+    {
+      "id": "REPO-B",
+      "name": "Understand-Anything",
+      "path": "G:\\Agent-Tools\\Understand-Anything",
+      "git": true,
+      "branch": null,
+      "head": null,
+      "dirty": null,
+      "remote": null,
+      "last_commit": null,
+      "notes": "Sibling repo. Not the target of this design — README explicitly separates it: 'hermes-ops does not own source analysis or the Understand Anything graph'"
+    },
+    {
+      "id": "REPO-C",
+      "name": "agentmemory-main",
+      "path": "G:\\Agent-Tools\\agentmemory-main",
+      "git": true,
+      "branch": null,
+      "head": null,
+      "notes": "Docker-based iii-engine. Referenced as potential AgentMemory backend but not the target project"
+    },
+    {
+      "id": "REPO-D",
+      "name": "FaceCraft-VN",
+      "path": "D:\\FaceCraft-VN",
+      "git": true,
+      "branch": "feature/smart-edit",
+      "head": "e3d910a9",
+      "dirty": true,
+      "files_count": 172,
+      "remote": null,
+      "last_commit": "fix(smart-edit): fix Gradio progress param, rounding, add mask_utils tests",
+      "notes": "Separate Gradio project. No Hermes orchestration, no Ops DB, no skills. Not relevant."
+    }
+  ]
+}

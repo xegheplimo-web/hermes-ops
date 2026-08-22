@@ -1,0 +1,26 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: hermes-ops-pg
+    environment:
+      POSTGRES_USER: hermes
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-hermesops}
+      POSTGRES_DB: hermes_ops
+      PGDATA: /var/lib/postgresql/data
+    ports:
+      - "127.0.0.1:55432:5432"
+    volumes:
+      - "./.pgdata:/var/lib/postgresql/data"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hermes -d hermes_ops"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - hermes-ops
+
+networks:
+  hermes-ops:
+    name: hermes-ops
+    driver: bridge

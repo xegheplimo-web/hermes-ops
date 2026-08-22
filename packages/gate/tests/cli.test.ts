@@ -144,15 +144,16 @@ describe('hermes-policy-gate — policy failures (exit 1)', () => {
   });
 
   it('fails on unresolved critical finding with UNRESOLVED_CRITICAL_FINDING', () => {
-    const p = writeManifest(
-      'finding.json',
-      validManifest({
-        coderabbit: {
-          findings: [{ id: 'f1', severity: 'critical', resolved: false }],
-        },
-      }),
-    );
-    const r = run(['--manifest', p, '--head-sha', HEAD_SHA, '--policy-version', POLICY_VERSION]);
+      const p = writeManifest(
+        'finding.json',
+        validManifest({
+          coderabbit: {
+            findings: [{ id: 'f1', severity: 'critical', resolved: false }],
+          },
+        }),
+      );
+      const validToken = JSON.stringify({ signedAt: '2026-01-01T00:00:00Z', approver: 'test', reason: 'test', signature: 'sig' });
+      const r = run(['--manifest', p, '--head-sha', HEAD_SHA, '--policy-version', POLICY_VERSION, '--approval', validToken]);
     expect(r.status).toBe(1);
     const out = parseJson(r.stdout) as Record<string, unknown>;
     expect(out['decision']).toBe('fail');
@@ -160,14 +161,15 @@ describe('hermes-policy-gate — policy failures (exit 1)', () => {
   });
 
   it('fails on policy version mismatch with POLICY_VERSION_MISMATCH', () => {
-    const p = writeManifest('pv-mismatch.json', validManifest({ policyVersion: OTHER_POLICY_VERSION }));
-    const r = run(['--manifest', p, '--head-sha', HEAD_SHA, '--policy-version', POLICY_VERSION]);
-    expect(r.status).toBe(1);
-    const out = parseJson(r.stdout) as Record<string, unknown>;
-    expect(out['decision']).toBe('fail');
-    expect(out['reasonCode']).toBe('POLICY_VERSION_MISMATCH');
-    expect(out['policyVersion']).toBe(POLICY_VERSION);
-  });
+      const p = writeManifest('pv-mismatch.json', validManifest({ policyVersion: OTHER_POLICY_VERSION }));
+      const validToken = JSON.stringify({ signedAt: '2026-01-01T00:00:00Z', approver: 'test', reason: 'test', signature: 'sig' });
+      const r = run(['--manifest', p, '--head-sha', HEAD_SHA, '--policy-version', POLICY_VERSION, '--approval', validToken]);
+      expect(r.status).toBe(1);
+      const out = parseJson(r.stdout) as Record<string, unknown>;
+      expect(out['decision']).toBe('fail');
+      expect(out['reasonCode']).toBe('POLICY_VERSION_MISMATCH');
+      expect(out['policyVersion']).toBe(POLICY_VERSION);
+    });
 
   it('fails on structurally malformed manifest (valid JSON, bad shape) with EVIDENCE_INVALID', () => {
     const p = writeManifest('malformed-shape.json', { schemaVersion: MANIFEST_SCHEMA_VERSION, headSha: HEAD_SHA });
