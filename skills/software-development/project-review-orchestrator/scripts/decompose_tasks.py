@@ -30,6 +30,12 @@ try:
 except ImportError:
     _HAS_CLASSIFIER = False
 
+try:
+    from strategy_router import get_route
+    _HAS_ROUTER = True
+except ImportError:
+    _HAS_ROUTER = False
+
 
 SEVERITY_RISK_MAP: dict[str, str] = {
     "low": "low",
@@ -84,6 +90,32 @@ def _classify_finding(finding: dict) -> dict:
     return result
 
 
+def _route_task(task_type: str, risk: str) -> dict:
+    """Resolve the execution strategy for a task via Strategy Router.
+
+    Returns the routing fields that must be persisted on the DAG node so
+    DevinAdapter can enforce them: strategy, required_gates, spec_level,
+    max_attempts. Falls back to a conservative default when the router is
+    unavailable so the DAG never silently loses these fields.
+    """
+    if _HAS_ROUTER:
+        route = get_route(task_type, risk)
+        return {
+            "strategy": route.get("strategy", []),
+            "required_gates": route.get("required_gates", ["ci"]),
+            "spec_level": route.get("spec_level", "none"),
+            "max_attempts": route.get("max_attempts", 3),
+            "routed_by": "strategy-router",
+        }
+    return {
+        "strategy": ["verification"],
+        "required_gates": ["ci", "codex"],
+        "spec_level": "formal",
+        "max_attempts": 3,
+        "routed_by": "fallback-conservative",
+    }
+
+
 def _generate_scope(finding: dict) -> str:
     """Build a human-readable scope description from a finding."""
     fid = _id(finding)
@@ -123,10 +155,19 @@ def _write_to_ops_db(
                 repository_name=repo_name,
                 head_sha=head_sha or "0" * 40,
                 policy_version=policy_version,
-                payload={"task_id": t["task_id"], "title": t.get("title", "")},
+                payload={
+                    "task_id": t["task_id"],
+                    "title": t.get("title", ""),
+                    "task_type": t.get("task_type"),
+                    "early_risk": t.get("early_risk"),
+                    "strategy": t.get("strategy", []),
+                    "required_gates": t.get("required_gates", []),
+                    "spec_level": t.get("spec_level"),
+                },
                 status=initial_status,
                 review_run_id=review_run_id,
                 dag_payload=t,
+                max_attempts=int(t.get("max_attempts", 3)),
             ))
 
         ids = adapter.bulk_create_tasks(ops_tasks)
@@ -196,12 +237,18 @@ def build_dag(reconciled: dict, codemap: str | None = None) -> dict:
     # -- investigation tasks (no deps, risk=low, no write_scope) ------------
     for f in investigations:
         cls = _classify_finding(f)
+        route = _route_task(cls["task_type"], cls["early_risk"])
         task = {
             "task_id": f"PROJ-{id_counter:03d}",
             "title": f"[INVESTIGATE] {f.get('title', 'Unknown finding')}",
             "task_type": cls["task_type"],
             "early_risk": cls["early_risk"],
             "risk_reasons": cls["risk_reasons"],
+            "strategy": route["strategy"],
+            "required_gates": route["required_gates"],
+            "spec_level": route["spec_level"],
+            "max_attempts": route["max_attempts"],
+            "routed_by": route["routed_by"],
             "objective": (
                 f"Investigate and verify: {f.get('required_action') or f.get('claim', 'No details')}"
             ),
@@ -244,6 +291,7 @@ def build_dag(reconciled: dict, codemap: str | None = None) -> dict:
 
         risk = _risk(f.get("severity", "medium"))
         write_scope = _generate_write_scope(f)
+        route = _route_task(cls["task_type"], cls["early_risk"])
         codemap_note = ""
         if codemap_context:
             codemap_note = " Consult the codemap brief for architecture context. "
@@ -254,6 +302,11 @@ def build_dag(reconciled: dict, codemap: str | None = None) -> dict:
             "task_type": cls["task_type"],
             "early_risk": cls["early_risk"],
             "risk_reasons": cls["risk_reasons"],
+            "strategy": route["strategy"],
+            "required_gates": route["required_gates"],
+            "spec_level": route["spec_level"],
+            "max_attempts": route["max_attempts"],
+            "routed_by": route["routed_by"],
             "objective": (
                 f"Implement: {f.get('required_action') or f.get('recommendation', 'Address the finding')}"
             ),
@@ -488,8 +541,23 @@ def main() -> int:
         meta = dag["meta"]
 
         # -- Write to Ops DB (authoritative runtime truth) ---------------------------------
+        # Fail-closed: when --ops-db is requested, a failed write means the run is
+        # NOT dispatchable. We surface PLAN_READY_NOT_DISPATCHED and a non-zero
+        # exit so no caller can mistake a file-only plan for queued work.
         ops_ids = None
-        if args.ops_db and _HAS_OPS:
+        if args.ops_db:
+            if not _HAS_OPS:
+                print(json.dumps({
+                    "ok": False,
+                    "state": "PLAN_READY_NOT_DISPATCHED",
+                    "error": (
+                        "--ops-db requested but ops_adapter is unavailable "
+                        "(install psycopg2-binary and set DATABASE_URL). "
+                        "task-plan.json was written but nothing is queued."
+                    ),
+                    "plan_file": str(plan_file),
+                }, indent=2), file=sys.stderr)
+                return 3
             try:
                 repo_owner = reconciled.get("project", "hermes-ops")
                 repo_name = reconciled.get("project", "hermes-ops")
@@ -502,13 +570,22 @@ def main() -> int:
                     dag, run_id, repo_owner, repo_name, _sha, "0.1.0",
                 )
             except Exception as exc:
-                print(json.dumps({"warning": f"Ops DB write failed (non-fatal): {exc}"}), file=sys.stderr)
+                print(json.dumps({
+                    "ok": False,
+                    "state": "PLAN_READY_NOT_DISPATCHED",
+                    "error": f"Ops DB write failed: {exc}",
+                    "plan_file": str(plan_file),
+                    "note": "No tasks were queued. Do not dispatch from the plan file.",
+                }, indent=2), file=sys.stderr)
+                return 3
 
         # -- Output ------------------------------------------------------------------------
+        state = "READY_TO_DISPATCH" if ops_ids else "PLAN_READY_NOT_DISPATCHED"
         print(
             json.dumps(
                 {
                     "ok": True,
+                    "state": state,
                     "task_count": meta["task_count"],
                     "investigation_count": meta["investigation_count"],
                     "implementation_count": meta["implementation_count"],

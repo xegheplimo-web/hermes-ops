@@ -281,8 +281,16 @@ class OpsDbAdapter:
         finally:
             cur.close()
 
-    def claim_task(self, worker_id: str, max_attempts: int = 5) -> OpsTask | None:
+    def claim_task(
+        self, worker_id: str, max_attempts: int = 5,
+        review_run_id: str | None = None,
+    ) -> OpsTask | None:
         """Claim one pending/queued task via SKIP LOCKED.
+
+        Enforces the per-row circuit breaker (`attempts < max_attempts`) so a
+        task that has burned its bounded attempts is never handed out again.
+        When `review_run_id` is given, the claim is scoped to that run, which
+        is what the dispatcher uses to avoid stealing another run's work.
 
         Returns the claimed task or None if nothing available.
         """
@@ -300,12 +308,14 @@ class OpsDbAdapter:
                     FROM tasks
                     WHERE status IN ('pending', 'queued')
                       AND available_at <= now()
+                      AND attempts < max_attempts
+                      AND (%s IS NULL OR review_run_id = %s)
                     ORDER BY available_at ASC, id ASC
                     FOR UPDATE SKIP LOCKED
                     LIMIT 1
                 )
                 RETURNING *
-            """, (worker_id,))
+            """, (worker_id, review_run_id, review_run_id))
             row = cur.fetchone()
             if not row:
                 return None

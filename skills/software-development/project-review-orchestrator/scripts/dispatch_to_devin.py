@@ -45,22 +45,59 @@ def _model(risk: str, override: str | None) -> str:
     return RISK_MODEL_MAP.get(risk.lower(), "glm-5-2")
 
 
-def _find_devin_binary(devin_binary: str) -> str | None:
-    """Resolve the Devin CLI binary, with default-install fallbacks on Windows."""
+def _find_devin_binary(devin_binary: str, allow_fallback: bool = True) -> str | None:
+    """Resolve the Devin CLI binary.
+
+    An explicit --devin-binary is honoured strictly: if it does not resolve we
+    return None instead of silently launching a different binary. The
+    default-install fallbacks apply only to the default name, so a test or a
+    caller pinning a binary can never be redirected to the real Devin.
+    """
     p = Path(devin_binary)
     if p.is_file():
         return str(p.resolve())
     from_path = shutil.which(devin_binary)
     if from_path:
         return from_path
+    if not allow_fallback:
+        return None
     candidates = [
         Path.home() / "AppData" / "Local" / "Programs" / "Devin" / "resources" / "app" / "extensions" / "windsurf" / "devin" / "bin" / "devin.exe",
-        Path(r"C:\\Users\\atton\\AppData\\Local\\Programs\\Devin\\resources\\app\\extensions\\windsurf\\devin\\bin\\devin.exe"),
     ]
     for c in candidates:
         if c.is_file():
             return str(c.resolve())
     return None
+
+
+def _strategy_block(task: dict) -> str:
+    """Render the Strategy Router decision as mandatory Devin instructions."""
+    strategy = task.get("strategy") or []
+    gates = task.get("required_gates") or []
+    spec_level = task.get("spec_level") or "none"
+    max_attempts = task.get("max_attempts", 3)
+
+    if not strategy:
+        return ""
+
+    steps = "\n".join(f"  {i}. {s}" for i, s in enumerate(strategy, 1))
+    lines = [
+        "",
+        "EXECUTION STRATEGY (assigned by Hermes Strategy Router — follow in order):",
+        steps,
+        f"Required gates before merge: {', '.join(gates) if gates else 'ci'}",
+        f"Spec level: {spec_level}",
+        f"Bounded attempts: {max_attempts}",
+    ]
+    if "systematic-debugging" in strategy:
+        lines.append("- Use the systematic-debugging skill: find root cause before fixing.")
+    if "tdd" in strategy or "test-first" in strategy:
+        lines.append("- Use test-driven-development: write the failing test FIRST.")
+    if "verification" in strategy or any("verif" in s for s in strategy):
+        lines.append("- Use verification-before-completion before reporting done.")
+    if spec_level == "formal":
+        lines.append("- Produce a formal spec and stop for spec review before implementing.")
+    return "\n".join(lines) + "\n"
 
 
 def _build_prompt(task: dict) -> str:
@@ -74,32 +111,36 @@ def _build_prompt(task: dict) -> str:
     write_scope = task.get("write_scope", [])
     deps = task.get("dependencies", [])
     finding_refs = task.get("finding_refs", [])
+    task_type = task.get("task_type", "")
+    early_risk = task.get("early_risk", "")
 
     criteria = "\n".join(f"- {c}" for c in acceptance)
     ws = f"\nWrite scope: {', '.join(write_scope)}" if write_scope else ""
     deps_str = f"\nDepends on: {', '.join(deps)}" if deps else ""
     refs_str = f"\nFinding refs: {', '.join(finding_refs)}" if finding_refs else ""
+    class_str = ""
+    if task_type or early_risk:
+        class_str = f"\nTask type: {task_type}    Early risk: {early_risk}"
 
     return f"""You are working on task {tid}.
 
 TITLE: {title}
 OBJECTIVE: {objective}
-SCOPE: {scope}{ws}{deps_str}{refs_str}
+SCOPE: {scope}{ws}{deps_str}{refs_str}{class_str}
 NON-GOALS: {non_goals}
 
 ACCEPTANCE CRITERIA:
 {criteria}
-
+{_strategy_block(task)}
 INSTRUCTIONS:
 - WORK ON A BRANCH. PRODUCE A PR.
 - DO NOT MODIFY UNRELATED CODE.
-- Follow test-driven-development when applicable.
-- Run verification-before-completion before reporting done.
 """
 
 
 def _dispatch_one(task: dict, out_dir: Path, devin_bin: str,
-                  model: str, pm: str, dispatch_all: bool) -> dict:
+                  model: str, pm: str, dispatch_all: bool,
+                  timeout_s: int = 300) -> dict:
     tid = task.get("task_id", "?")
     prompt = _build_prompt(task)
     prompt_dir = out_dir / "devin"
@@ -109,7 +150,8 @@ def _dispatch_one(task: dict, out_dir: Path, devin_bin: str,
 
     entry: dict = {"task_id": tid, "model": model, "prompt_file": str(prompt_file)}
     if dispatch_all:
-        resolved_bin = _find_devin_binary(devin_bin)
+        # Only the default binary name may fall back to a known install path.
+        resolved_bin = _find_devin_binary(devin_bin, allow_fallback=(devin_bin == "devin"))
         if not resolved_bin:
             entry["command"] = f"{devin_bin} ..."
             entry["dispatched"] = False
@@ -130,7 +172,7 @@ def _dispatch_one(task: dict, out_dir: Path, devin_bin: str,
                 cmd,
                 capture_output=True,
                 text=True,
-                timeout=300,
+                timeout=timeout_s,
             )
             entry["devin_exit_code"] = result.returncode
             entry["devin_stdout"] = result.stdout[:2000] if result.stdout else ""
@@ -138,7 +180,7 @@ def _dispatch_one(task: dict, out_dir: Path, devin_bin: str,
             entry["dispatched"] = result.returncode == 0
         except subprocess.TimeoutExpired:
             entry["devin_exit_code"] = -1
-            entry["devin_stderr"] = "Devin timed out after 300s"
+            entry["devin_stderr"] = f"Devin timed out after {timeout_s}s"
             entry["dispatched"] = False
         except OSError as exc:
             entry["devin_exit_code"] = -1
@@ -158,6 +200,8 @@ def main() -> int:
     parser.add_argument("--devin-binary", default="devin")
     parser.add_argument("--dispatch-all", action="store_true")
     parser.add_argument("--permission-mode", default="dangerous")
+    parser.add_argument("--devin-timeout", type=int, default=300,
+                        help="Per-task Devin launch timeout in seconds (default 300)")
     parser.add_argument("--model", help="Override model for all tasks")
     parser.add_argument("--ops-db", action="store_true", help="Use Ops DB as source")
     parser.add_argument("--review-run-id", help="Review run ID for Ops DB lookup")
@@ -174,22 +218,53 @@ def main() -> int:
                 print(json.dumps({"ok": False, "error": "--review-run-id required with --ops-db"}), file=sys.stderr)
                 return 1
 
-            with OpsDbAdapter() as db:
-                tasks = db.get_tasks_by_run(args.review_run_id)
-                if not tasks:
-                    print(json.dumps({"ok": False, "error": f"No tasks found for run {args.review_run_id}"}), file=sys.stderr)
-                    return 1
+            worker_id = f"hermes-{os.getpid()}"
+            out_dir = Path(args.plan).parent if args.plan else Path.cwd()
 
+            with OpsDbAdapter() as db:
+                # Dry run: inspect without claiming or mutating state.
+                if not args.dispatch_all:
+                    tasks = db.get_tasks_by_run(args.review_run_id)
+                    if not tasks:
+                        print(json.dumps({"ok": False, "error": f"No tasks found for run {args.review_run_id}"}), file=sys.stderr)
+                        return 1
+                    preview: list[dict] = []
+                    for t in tasks:
+                        dp = t.dag_payload or {}
+                        risk = dp.get("early_risk") or dp.get("risk", "medium")
+                        preview.append({
+                            "task_id": dp.get("task_id", t.external_id),
+                            "ops_db_id": t.id,
+                            "status": t.status,
+                            "claimable": t.status in ("pending", "queued") and t.attempts < t.max_attempts,
+                            "attempts": t.attempts,
+                            "max_attempts": t.max_attempts,
+                            "task_type": dp.get("task_type"),
+                            "early_risk": risk,
+                            "strategy": dp.get("strategy", []),
+                            "required_gates": dp.get("required_gates", []),
+                            "spec_level": dp.get("spec_level"),
+                            "model": _model(risk, args.model),
+                            "source": "ops_db",
+                        })
+                    print(json.dumps({
+                        "ok": True, "task_count": len(preview), "dry_run": True,
+                        "source": "ops_db", "tasks": preview,
+                    }, indent=2))
+                    return 0
+
+                # Real execution: claim each task under a lease before dispatch.
                 results: list[dict] = []
-                for t in tasks:
-                    if t.status in ("completed", "failed", "cancelled"):
-                        continue  # skip already-terminal tasks
+                while True:
+                    t = db.claim_task(worker_id, review_run_id=args.review_run_id)
+                    if t is None:
+                        break  # nothing claimable: blocked, exhausted, or done
+
                     dp = t.dag_payload or {}
-                    risk = dp.get("risk", "medium")
+                    risk = dp.get("early_risk") or dp.get("risk", "medium")
                     model = _model(risk, args.model)
                     tid = dp.get("task_id", t.external_id)
 
-                    # Build a dict-shaped task for _dispatch_one
                     task_dict = {
                         "task_id": tid,
                         "title": dp.get("title", ""),
@@ -200,44 +275,90 @@ def main() -> int:
                         "write_scope": dp.get("write_scope", []),
                         "dependencies": dp.get("dependencies", []),
                         "finding_refs": dp.get("finding_refs", []),
+                        "task_type": dp.get("task_type", ""),
+                        "early_risk": risk,
+                        "strategy": dp.get("strategy", []),
+                        "required_gates": dp.get("required_gates", []),
+                        "spec_level": dp.get("spec_level", "none"),
+                        "max_attempts": t.max_attempts,
                         "risk": risk,
                     }
 
-                    if args.dispatch_all:
-                        entry = _dispatch_one(task_dict, Path(args.plan).parent if args.plan else Path.cwd(),
-                                              args.devin_binary, model, args.permission_mode, True)
-                        entry["ops_db_id"] = t.id
-                        entry["source"] = "ops_db"
-                        # Transition to DISPATCHED
-                        db.transition_task(t.id, STATUS_DISPATCHED, worker_id=f"hermes-{os.getpid()}")
+                    entry = _dispatch_one(task_dict, out_dir, args.devin_binary,
+                                          model, args.permission_mode, True,
+                                          timeout_s=args.devin_timeout)
+                    entry["ops_db_id"] = t.id
+                    entry["source"] = "ops_db"
+                    entry["lease_owner"] = worker_id
+                    entry["attempts"] = t.attempts
+                    entry["max_attempts"] = t.max_attempts
+
+                    # Transition strictly on the launch outcome.
+                    if entry.get("dispatched"):
+                        db.transition_task(t.id, STATUS_DISPATCHED, worker_id=worker_id)
                         db.record_audit(AuditEvent(
                             task_id=t.id, actor="hermes",
                             action="dispatched_to_devin",
-                            detail={"model": model, "risk": risk, "task_id": tid},
+                            detail={
+                                "model": model, "risk": risk, "task_id": tid,
+                                "strategy": dp.get("strategy", []),
+                                "required_gates": dp.get("required_gates", []),
+                                "lease_owner": worker_id,
+                            },
                         ))
+                        entry["ops_status"] = STATUS_DISPATCHED
                     else:
-                        entry = _dispatch_one(task_dict, Path(args.plan).parent if args.plan else Path.cwd(),
-                                              args.devin_binary, model, args.permission_mode, False)
-                        entry["ops_db_id"] = t.id
-                        entry["source"] = "ops_db"
-                        entry["status"] = t.status
+                        err = entry.get("error") or entry.get("devin_stderr") or "Devin launch failed"
+                        db.transition_task(t.id, STATUS_FAILED, error=err[:500], worker_id=worker_id)
+                        db.record_audit(AuditEvent(
+                            task_id=t.id, actor="hermes",
+                            action="dispatch_failed",
+                            detail={
+                                "model": model, "risk": risk, "task_id": tid,
+                                "error": err[:500], "attempts": t.attempts,
+                                "max_attempts": t.max_attempts,
+                                "exhausted": t.attempts >= t.max_attempts,
+                            },
+                        ))
+                        entry["ops_status"] = STATUS_FAILED
 
                     results.append(entry)
 
-                if args.dispatch_all:
-                    log = {"ok": True, "tasks_dispatched": len(results), "state": "DISPATCHED", "source": "ops_db", "tasks": results}
-                    log_path = Path(args.plan).parent / "devin-dispatch-log.json" if args.plan else Path("devin-dispatch-log.json")
-                    log_path.write_text(json.dumps(log, indent=2), encoding="utf-8")
-                    print(json.dumps(log, indent=2))
-                    return 0
+                dispatched_ok = [r for r in results if r.get("dispatched")]
+                failed = [r for r in results if not r.get("dispatched")]
+                log = {
+                    "ok": len(failed) == 0,
+                    "tasks_claimed": len(results),
+                    "tasks_dispatched": len(dispatched_ok),
+                    "tasks_failed": len(failed),
+                    "state": "DISPATCHED" if dispatched_ok and not failed else (
+                        "PARTIALLY_DISPATCHED" if dispatched_ok else "DISPATCH_FAILED"
+                    ),
+                    "source": "ops_db",
+                    "lease_owner": worker_id,
+                    "tasks": results,
+                }
+                log_path = out_dir / "devin-dispatch-log.json"
+                log_path.write_text(json.dumps(log, indent=2), encoding="utf-8")
+                print(json.dumps(log, indent=2))
+                return 0 if not failed else 1
 
-                print(json.dumps({"ok": True, "task_count": len(results), "dry_run": True, "source": "ops_db", "tasks": results}, indent=2))
-                return 0
-
-        # ── Fallback: task-plan.json ────────────────────────────────────
+        # ── Fallback: task-plan.json (DRY RUN ONLY) ─────────────────────
         if not args.plan:
             print(json.dumps({"ok": False, "error": "Specify --plan or --ops-db"}), file=sys.stderr)
             return 1
+
+        if args.dispatch_all:
+            print(json.dumps({
+                "ok": False,
+                "error": (
+                    "Real dispatch requires Ops DB. task-plan.json is a dry-run "
+                    "artifact only — it carries no lease, no attempt counter and "
+                    "no dependency state. Re-run with --ops-db --review-run-id <id>."
+                ),
+                "state": "PLAN_READY_NOT_DISPATCHED",
+            }, indent=2), file=sys.stderr)
+            return 2
 
         plan_path = Path(args.plan).resolve()
         if not plan_path.exists():
@@ -253,19 +374,15 @@ def main() -> int:
         out_dir = plan_path.parent
         results = []
         for t in tasks:
-            risk = t.get("risk", "medium")
+            risk = t.get("early_risk") or t.get("risk", "medium")
             model = _model(risk, args.model)
-            entry = _dispatch_one(t, out_dir, args.devin_binary, model, args.permission_mode, args.dispatch_all)
+            entry = _dispatch_one(t, out_dir, args.devin_binary, model, args.permission_mode, False)
             entry["risk"] = risk
+            entry["task_type"] = t.get("task_type")
+            entry["strategy"] = t.get("strategy", [])
+            entry["required_gates"] = t.get("required_gates", [])
             entry["source"] = "task-plan.json"
             results.append(entry)
-
-        if args.dispatch_all:
-            log = {"ok": True, "tasks_dispatched": len(results), "state": "DISPATCHED", "source": "task-plan.json", "tasks": results}
-            log_path = out_dir / "devin-dispatch-log.json"
-            log_path.write_text(json.dumps(log, indent=2), encoding="utf-8")
-            print(json.dumps(log, indent=2))
-            return 0
 
         print(json.dumps({"ok": True, "task_count": len(results), "dry_run": True, "source": "task-plan.json", "tasks": results}, indent=2))
         return 0
