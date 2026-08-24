@@ -14,11 +14,16 @@
 
 /** Lifecycle status for `tasks` and `jobs` (the queue tables). */
 export type QueueStatus =
+  | 'planning'
+  | 'queued'
   | 'pending'
   | 'running'
+  | 'dispatched'
+  | 'verifying'
   | 'completed'
   | 'failed'
-  | 'cancelled';
+  | 'cancelled'
+  | 'blocked';
 
 /** Lifecycle status for `agent_runs`. Distinct from `QueueStatus` because
  *  agent runs have a `succeeded`/`timed_out` distinction that queue rows do
@@ -33,11 +38,16 @@ export type AgentRunStatus =
 
 /** All distinct status strings the schema accepts, for validation helpers. */
 export const QUEUE_STATUSES: readonly QueueStatus[] = [
+  'planning',
+  'queued',
   'pending',
   'running',
+  'dispatched',
+  'verifying',
   'completed',
   'failed',
   'cancelled',
+  'blocked',
 ] as const;
 
 export const AGENT_RUN_STATUSES: readonly AgentRunStatus[] = [
@@ -59,11 +69,16 @@ export const TERMINAL_QUEUE_STATUSES: readonly QueueStatus[] = [
 /** Allowed transitions for queue rows (tasks/jobs). */
 export const QUEUE_TRANSITIONS: ReadonlyMap<QueueStatus, readonly QueueStatus[]> =
   new Map<QueueStatus, readonly QueueStatus[]>([
-    ['pending', ['running', 'cancelled']],
-    ['running', ['completed', 'failed', 'pending', 'cancelled']],
+    ['planning', ['queued', 'cancelled', 'failed']],
+    ['queued', ['pending', 'blocked', 'cancelled']],
+    ['pending', ['running', 'blocked', 'cancelled']],
+    ['running', ['dispatched', 'verifying', 'completed', 'failed', 'pending', 'cancelled']],
+    ['dispatched', ['verifying', 'running', 'failed', 'cancelled']],
+    ['verifying', ['completed', 'failed', 'running', 'cancelled']],
     ['completed', []],
-    ['failed', ['pending', 'cancelled']],
+    ['failed', ['pending', 'queued', 'cancelled']],
     ['cancelled', []],
+    ['blocked', ['queued', 'pending', 'cancelled']],
   ]);
 
 /**
@@ -101,6 +116,8 @@ export interface TaskRow {
   readonly last_error: string | null;
   readonly created_at: Date;
   readonly updated_at: Date;
+  readonly review_run_id: string | null;
+  readonly dag_payload: unknown;
 }
 
 /** `jobs` row. */
@@ -171,6 +188,7 @@ export const MIGRATION_FILES: readonly string[] = [
   '0003_init_agent_runs.sql',
   '0004_init_evidence.sql',
   '0005_init_audit_events.sql',
+  '0006_expand_task_statuses.sql',
 ] as const;
 
 /** Table each migration creates, keyed by filename. */
@@ -183,4 +201,5 @@ export const MIGRATION_TABLES: ReadonlyMap<string, string> = new Map<
   ['0003_init_agent_runs.sql', 'agent_runs'],
   ['0004_init_evidence.sql', 'evidence'],
   ['0005_init_audit_events.sql', 'audit_events'],
-]);
+    ['0006_expand_task_statuses.sql', 'tasks'],
+  ]);

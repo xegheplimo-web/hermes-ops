@@ -127,7 +127,7 @@ def looks_like_ci(path: str) -> bool:
 
 
 def looks_security_sensitive(path: str) -> bool:
-    parts = re.split(r"[/\\_.\-]+", path.lower())
+    parts = re.split(r"[/\\\\_.\-]+", path.lower())
     return any(part in SECURITY_KEYWORDS for part in parts)
 
 
@@ -307,18 +307,44 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--repo", required=True)
     parser.add_argument("--out", required=True)
+    parser.add_argument("--run-id", default=None, help="Run identifier (auto-generated if omitted)")
+    parser.add_argument("--review-mode", default="openai-api", help="Review mode identifier (default: openai-api)")
     args = parser.parse_args()
     try:
         repo = resolve_repo(Path(args.repo).resolve())
         out = Path(args.out).resolve()
         out.mkdir(parents=True, exist_ok=True)
         evidence = build_evidence(repo)
+        if args.run_id:
+            run_id = args.run_id
+        else:
+            short_sha = run_git(repo, "rev-parse", "--short", "HEAD").strip()
+            run_id = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H%M%SZ") + "-" + short_sha
+        evidence["run_id"] = run_id
+
         json_path = out / "repo-evidence.json"
         md_path = out / "repo-evidence.md"
+        state_path = out / "state.json"
         json_path.write_text(json.dumps(evidence, indent=2, ensure_ascii=False), encoding="utf-8")
         md_path.write_text(render_markdown(evidence), encoding="utf-8")
+        state_path.write_text(json.dumps({
+            "run_id": run_id,
+            "created_at": evidence["generated_at"],
+            "status": "EVIDENCE_COLLECTED",
+            "project": evidence["repository"]["root_name"],
+            "branch": evidence["repository"]["branch"],
+            "commit_sha": evidence["repository"]["commit_sha"],
+            "dirty": evidence["repository"]["dirty"],
+            "review_mode": args.review_mode,
+            "artifacts": {
+                "repo_evidence": "repo-evidence.json",
+                "repo_evidence_md": "repo-evidence.md",
+                "state": "state.json",
+            },
+        }, indent=2, ensure_ascii=False), encoding="utf-8")
         print(json.dumps({"ok": True, "repo": str(repo), "commit": evidence["repository"]["commit_sha"],
-                           "dirty": evidence["repository"]["dirty"], "json": str(json_path), "markdown": str(md_path)}, indent=2))
+                           "dirty": evidence["repository"]["dirty"], "run_id": run_id,
+                           "json": str(json_path), "markdown": str(md_path), "state": str(state_path)}, indent=2))
         return 0
     except (EvidenceError, OSError) as exc:
         print(json.dumps({"ok": False, "error": str(exc)}, indent=2), file=sys.stderr)

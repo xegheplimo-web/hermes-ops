@@ -1,0 +1,68 @@
+{
+  "meta": {
+    "run_id": "codex-smoke-2026-08-25",
+    "project": "atton",
+    "codemap_available": true,
+    "task_count": 2,
+    "investigation_count": 0,
+    "implementation_count": 2
+  },
+  "tasks": [
+    {
+      "task_id": "PROJ-001",
+      "title": "[IMPLEMENT] Stop printing configured secrets",
+      "objective": "Implement: fix",
+      "finding_refs": [
+        "CODEX-P1"
+      ],
+      "evidence_refs": [
+        "C:\\Users\\atton\\codex-smoke-repo\\main.py:8-8"
+      ],
+      "scope": "Address finding CODEX-P1: fix",
+      "write_scope": [
+        "C:\\Users\\atton\\codex-smoke-repo\\main.py:8-8"
+      ],
+      "non_goals": "Do not refactor unrelated code or address findings outside the assigned finding_refs. Consult the codemap brief for architecture context. ",
+      "dependencies": [],
+      "risk": "high",
+      "executor": "devin",
+      "acceptance_criteria": [
+        "Finding CODEX-P1 is addressed per its required action",
+        "All existing tests pass",
+        "No regressions introduced in scoped modules"
+      ],
+      "verification": "Automated tests + code review",
+      "rollback": "Revert changes to: C:\\Users\\atton\\codex-smoke-repo\\main.py:8-8",
+      "retry_limit": 3,
+      "parallel_group": "impl-01"
+    },
+    {
+      "task_id": "PROJ-002",
+      "title": "[IMPLEMENT] Fail when SECRET is not configured",
+      "objective": "Implement: address",
+      "finding_refs": [
+        "CODEX-P2"
+      ],
+      "evidence_refs": [
+        "C:\\Users\\atton\\codex-smoke-repo\\main.py:5-5"
+      ],
+      "scope": "Address finding CODEX-P2: address",
+      "write_scope": [
+        "C:\\Users\\atton\\codex-smoke-repo\\main.py:5-5"
+      ],
+      "non_goals": "Do not refactor unrelated code or address findings outside the assigned finding_refs. Consult the codemap brief for architecture context. ",
+      "dependencies": [],
+      "risk": "medium",
+      "executor": "devin",
+      "acceptance_criteria": [
+        "Finding CODEX-P2 is addressed per its required action",
+        "All existing tests pass",
+        "No regressions introduced in scoped modules"
+      ],
+      "verification": "Automated tests + code review",
+      "rollback": "Revert changes to: C:\\Users\\atton\\codex-smoke-repo\\main.py:5-5",
+      "retry_limit": 3,
+      "parallel_group": "impl-01"
+    }
+  ]
+}

@@ -1,0 +1,32 @@
+{
+  "conflicts": [],
+  "status": "CLEAR",
+  "requires_reconciliation": false,
+  "summary": {
+    "total": 0,
+    "by_type": {
+      "DONE_UNVERIFIED": 0,
+      "MEMORY_VS_REPO": 0,
+      "STALE_MEMORY": 0,
+      "SHA_MISMATCH": 0,
+      "OPS_VS_GIT": 0
+    },
+    "by_severity": {
+      "error": 0,
+      "warning": 0
+    }
+  },
+  "meta": {
+    "repo_sha": "b4a92d86f10ab457e8107ade831d9be7123a83fc",
+    "repo_branch": "main",
+    "review_run_id": null,
+    "review_sha": "b4a92d86f10ab457e8107ade831d9be7123a83fc",
+    "check_types": [
+      "DONE_UNVERIFIED",
+      "MEMORY_VS_REPO",
+      "OPS_VS_GIT",
+      "SHA_MISMATCH",
+      "STALE_MEMORY"
+    ]
+  }
+}
