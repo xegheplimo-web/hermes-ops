@@ -31,12 +31,13 @@ const stripComments = (sql: string): string =>
 describe('migrations — ordering and presence', () => {
   it('exposes an ordered, dependency-correct catalog', () => {
     expect(MIGRATION_FILES).toEqual([
-      '0001_init_tasks.sql',
-      '0002_init_jobs.sql',
-      '0003_init_agent_runs.sql',
-      '0004_init_evidence.sql',
-      '0005_init_audit_events.sql',
-    ]);
+          '0001_init_tasks.sql',
+          '0002_init_jobs.sql',
+          '0003_init_agent_runs.sql',
+          '0004_init_evidence.sql',
+          '0005_init_audit_events.sql',
+          '0006_expand_task_statuses.sql',
+        ]);
   });
 
   it('every catalog file exists on disk and vice versa', () => {
@@ -79,14 +80,26 @@ describe('migrations — ordering and presence', () => {
 });
 
 describe('migrations — content', () => {
+  /** Migrations that CREATE their table vs. those that ALTER an existing one.
+   *  ALTER-only migrations (e.g. 0006) legitimately have no CREATE TABLE. */
+  const ALTER_ONLY_MIGRATIONS = new Set(['0006_expand_task_statuses.sql']);
+
   for (const file of MIGRATION_FILES) {
     const table = MIGRATION_TABLES.get(file);
     if (!table) throw new Error(`missing table mapping for ${file}`);
 
-    it(`${file} creates table ${table} if not exists`, () => {
-      const sql = readMigration(file);
-      expect(sql).toContain(`CREATE TABLE IF NOT EXISTS ${table}`);
-    });
+    if (ALTER_ONLY_MIGRATIONS.has(file)) {
+      it(`${file} alters table ${table} idempotently`, () => {
+        const sql = stripComments(readMigration(file));
+        expect(/ALTER\s+TABLE/i.test(sql)).toBe(true);
+        expect(sql).toContain(table);
+      });
+    } else {
+      it(`${file} creates table ${table} if not exists`, () => {
+        const sql = readMigration(file);
+        expect(sql).toContain(`CREATE TABLE IF NOT EXISTS ${table}`);
+      });
+    }
 
     it(`${file} does not drop tables (init migrations are additive)`, () => {
       const sql = readMigration(file);
@@ -155,12 +168,17 @@ describe('migrations — content', () => {
 describe('schema — status enums', () => {
   it('QUEUE_STATUSES matches the tasks/jobs CHECK constraint', () => {
     expect(QUEUE_STATUSES).toEqual([
-      'pending',
-      'running',
-      'completed',
-      'failed',
-      'cancelled',
-    ]);
+          'planning',
+          'queued',
+          'pending',
+          'running',
+          'dispatched',
+          'verifying',
+          'completed',
+          'failed',
+          'cancelled',
+          'blocked',
+        ]);
   });
 
   it('AGENT_RUN_STATUSES matches the agent_runs CHECK constraint', () => {
