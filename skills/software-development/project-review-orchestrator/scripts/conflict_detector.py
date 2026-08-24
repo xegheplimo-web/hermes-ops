@@ -347,7 +347,8 @@ def detect_all(
 ) -> dict:
     """Run all configured conflict detectors and return structured result."""
     git = GitEvidence(repo_path)
-    ops = OpsEvidence(review_run_id) if _HAS_OPS else None
+    # Only query Ops DB when a specific review run is being validated
+    ops = OpsEvidence(review_run_id) if (_HAS_OPS and review_run_id) else None
     memory = memory_entries or []
 
     all_conflicts: list[dict] = []
