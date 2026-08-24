@@ -26,6 +26,16 @@ SCRIPTS = SKILL_DIR / "scripts"
 REPO = Path("G:/Agent-Tools/hermes-ops")
 DATABASE_URL = os.getenv("DATABASE_URL", "postgres://hermes:hermesops@localhost:55432/hermes_ops")
 
+# Resolve current repo state (avoids hardcoded SHA after each push)
+_expected_sha_proc = subprocess.run(
+    ["git", "rev-parse", "HEAD"], cwd=REPO, capture_output=True, text=True, timeout=10
+)
+EXPECTED_SHA = _expected_sha_proc.stdout.strip() if _expected_sha_proc.returncode == 0 else "0000000000000000000000000000000000000000"
+_expected_branch_proc = subprocess.run(
+    ["git", "rev-parse", "--abbrev-ref", "HEAD"], cwd=REPO, capture_output=True, text=True, timeout=10
+)
+EXPECTED_BRANCH = _expected_branch_proc.stdout.strip() or "main"
+
 PASS = 0
 FAIL = 0
 STEPS = []
@@ -94,7 +104,7 @@ def test_evidence() -> str:
     result = json.loads(out)
     assert result.get("ok") is True
     RUN_ID = result["run_id"]
-    assert result["commit"] == "b4a92d86f10ab457e8107ade831d9be7123a83fc"
+    assert result["commit"] == EXPECTED_SHA
     assert (OUT / "repo-evidence.json").exists()
     assert (OUT / "repo-evidence.md").exists()
     assert (OUT / "state.json").exists()
@@ -105,7 +115,7 @@ def test_state_created() -> str:
     state = json.loads((OUT / "state.json").read_text())
     assert state["status"] == "EVIDENCE_COLLECTED"
     assert state["run_id"] == RUN_ID
-    assert state["commit_sha"] == "b4a92d86f10ab457e8107ade831d9be7123a83fc"
+    assert state["commit_sha"] == EXPECTED_SHA
     return f"status={state['status']}, artifacts={list(state['artifacts'].keys())}"
 
 
@@ -118,7 +128,7 @@ def test_hermes_analysis() -> str:
     analysis = f"""# Hermes First-Pass Analysis — {RUN_ID}
 
 ## PROJECT SNAPSHOT
-Repo: hermes-ops | Branch: main | Commit: b4a92d8
+Repo: hermes-ops | Branch: {EXPECTED_BRANCH} | Commit: {EXPECTED_SHA[:7]}
 Languages: Python (TypeScript), TypeScript | 392 tests passing
 
 ## CURRENT IMPLEMENTED ARCHITECTURE
@@ -363,8 +373,8 @@ def test_codemap() -> str:
     )
     result = json.loads(out)
     assert result.get("ok") is True
-    assert result["commit"] == "b4a92d86f10ab457e8107ade831d9be7123a83fc"
-    assert result["branch"] == "main"
+    assert result["commit"] == EXPECTED_SHA
+    assert result["branch"] == EXPECTED_BRANCH
     assert (OUT / "codemap-brief.md").exists()
     return f"commit={result['commit'][:10]}, branch={result['branch']}"
 
@@ -478,7 +488,7 @@ def test_duplicate_prevention() -> str:
         # Insert same task twice
         eid = make_external_id(str(RUN_ID), "dup-test")
         task1 = OpsTask(external_id=eid, repository_owner="hermes-ops",
-                        repository_name="hermes-ops", head_sha="b4a92d86f10ab457e8107ade831d9be7123a83fc",
+                        repository_name="hermes-ops", head_sha=EXPECTED_SHA,
                         policy_version="0.1.0", status="queued", review_run_id=str(RUN_ID),
                         dag_payload={"task_id": "DUP-001"})
         id1 = db.create_task(task1)
@@ -498,7 +508,7 @@ def test_stale_recovery() -> str:
         # Create task, fake old lock
         eid = make_external_id(str(RUN_ID), "stale-test-e2e")
         task = OpsTask(external_id=eid, repository_owner="hermes-ops",
-                       repository_name="hermes-ops", head_sha="b4a92d86f10ab457e8107ade831d9be7123a83fc",
+                       repository_name="hermes-ops", head_sha=EXPECTED_SHA,
                        policy_version="0.1.0", status=STATUS_RUNNING, review_run_id=str(RUN_ID),
                        locked_by="crashed-worker", locked_at=None)
         tid = db.create_task(task)
@@ -525,7 +535,7 @@ def test_blocked_not_claimable() -> str:
         # Create a blocked task (has deps)
         eid = make_external_id(str(RUN_ID), "blocked-e2e-test")
         task = OpsTask(external_id=eid, repository_owner="hermes-ops",
-                       repository_name="hermes-ops", head_sha="b4a92d86f10ab457e8107ade831d9be7123a83fc",
+                       repository_name="hermes-ops", head_sha=EXPECTED_SHA,
                        policy_version="0.1.0", status=STATUS_BLOCKED, review_run_id=str(RUN_ID),
                        dag_payload={"dependencies": ["NONEXISTENT"]})
         db.create_task(task)
@@ -575,7 +585,8 @@ def main() -> int:
     print("=" * 70)
     print("  CANONICAL PIPELINE E2E TEST")
     print(f"  Repo:     {REPO}")
-    print(f"  Commit:   b4a92d8")
+    print(f"  Commit:   {EXPECTED_SHA[:7]}")
+    print(f"  Branch:   {EXPECTED_BRANCH}")
     print(f"  Database: {DATABASE_URL}")
     print(f"  Output:   {OUT}")
     print("=" * 70)
