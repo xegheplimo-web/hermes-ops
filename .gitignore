@@ -6,3 +6,6 @@ dist
 .DS_Store
 .pgdata/
 __pycache__/
+devin/
+.hermes/reviews/codex-smoke-*/
+.hermes/reviews/reality-check-*/

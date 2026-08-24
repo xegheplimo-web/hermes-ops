@@ -1,9 +1,0 @@
-The executable discloses configured secrets through stdout and silently substitutes a public fallback when configuration is absent. Both behaviors make the secret-handling implementation unsafe.
-
-Full review comments:
-
-- [P1] Stop printing configured secrets — C:\Users\atton\codex-smoke-repo\main.py:8-8
-  Whenever the script runs with `SECRET` configured, this line writes the credential verbatim to stdout, where CI logs, process supervisors, or captured terminal output can persist it. Confirm configuration without emitting the secret value.
-
-- [P2] Fail when SECRET is not configured — C:\Users\atton\codex-smoke-repo\main.py:5-5
-  When `SECRET` is unset, this returns a repository-known value rather than reporting missing configuration. Callers can consequently treat a public placeholder as a valid credential and continue with a misconfigured deployment; require the environment variable or validate its presence explicitly.
