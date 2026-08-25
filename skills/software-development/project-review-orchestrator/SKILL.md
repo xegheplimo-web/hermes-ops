@@ -591,6 +591,24 @@ is UNKNOWN, not FACT. Building an implementation task on it means Devin
 implements a guess. Run `claim_classifier.py` and route UNKNOWN claims to
 investigation first.
 
+### Passing FINAL RISK a partial evidence set
+
+`final_risk.py` can only escalate on signals it is actually handed. Two ways
+this silently understates risk:
+
+- **Wrong key shape.** The reader accepts `tests_failed`/`tests_passed`,
+  `failed`/`passed`, and `fail_count`/`pass_count`. If a caller invents a
+  fourth spelling the count resolves to 0 and a red build looks green. Verify
+  with a deliberate failure before trusting a green FINAL RISK.
+- **Omitted arguments.** `--review-findings`, `--security-findings`, and
+  `--changed-paths` are all optional at the CLI level but not optional
+  semantically. Omitting `--changed-paths` disables the whole sensitive-path
+  escalation table (auth, payment, migration, secret, crypto); omitting the
+  findings arguments means a CRITICAL reviewer finding cannot raise risk.
+
+An `unknown` CI status is not evidence of green and must never be used to
+downgrade. A run that does not know whether it passed has not passed.
+
 ## Verification
 
 A successful review run proves all of the following:
