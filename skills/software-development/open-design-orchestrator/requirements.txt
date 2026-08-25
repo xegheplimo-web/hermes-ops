@@ -1,0 +1,3 @@
+# Dependencies for open-design-orchestrator skill
+# This skill delegates to project-review-orchestrator scripts.
+# See ../project-review-orchestrator/requirements.txt for full dependency list.

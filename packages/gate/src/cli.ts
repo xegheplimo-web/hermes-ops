@@ -1,27 +1,30 @@
 /**
  * `hermes-policy-gate` CLI — local, deterministic policy gate.
  *
- * Wraps the pure contracts + policy evaluator in a small, strict command-line
- * interface. No GitHub SDK, HTTP, database, agent calls, credentials, or
- * network. The CLI reads a JSON evidence manifest from disk, evaluates it
- * against the expected head SHA and policy version, and emits a stable,
- * machine-readable JSON result (no full manifest or source content).
+ * Wraps the 4-way gate engine in a small, strict command-line interface.
+ * No GitHub SDK, HTTP, database, agent calls, credentials, or network.
+ * The CLI reads a JSON evidence manifest from disk, evaluates it against the
+ * expected head SHA and policy version, and emits a stable, machine-readable
+ * JSON result (no full manifest or source content).
  *
  * Exit codes:
- *   0 — policy PASS
- *   1 — policy failure / invalid evidence (evaluator returned `fail`)
+ *   0 — gate PASS
+ *   1 — gate REPAIR, ESCALATE, or BLOCK (non-PASS)
  *   2 — usage or operational errors (bad args, unreadable file, bad JSON, ...)
  *
  * On usage/operational errors only a short, safe message is written to stderr;
- * secrets and raw manifest JSON are never printed. On pass/fail the stable
+ * secrets and raw manifest JSON are never printed. On a gate result the stable
  * result JSON is written to stdout (or `--output` file) and the exit code
  * distinguishes the outcome.
  */
 
-import { evaluatePolicy, classifyFromPolicyResult, recalculatePostDiffRisk, type PolicyResult, type RiskClass } from '@hermes-ops/policy';
 import {
-  type HumanApprovalToken,
-} from './approval.js';
+  evaluateGate,
+  type GateEngineResult,
+  type GateOutcome,
+  normalizeRiskLevel,
+} from './engine.js';
+import type { HumanApprovalToken } from './approval.js';
 
 const HEAD_SHA_RE = /^[0-9a-f]{40}$/;
 const SEMVER_RE = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/;
@@ -33,13 +36,18 @@ const KNOWN_FLAGS = [
   '--output',
   '--approval',
   '--changed-files',
+  '--risk',
+  '--attempts',
+  '--max-attempts',
   '--help',
 ] as const;
 type KnownFlag = (typeof KNOWN_FLAGS)[number];
 
 const USAGE =
   'usage: hermes-policy-gate --manifest <file.json> --head-sha <40-lowercase-hex> ' +
-  '--policy-version <semver> [--output <file.json>] [--changed-files <file1,file2,...>]\n' +
+  '--policy-version <semver> [--output <file.json>] [--changed-files <list>]\n' +
+  '       [--risk <LOW|MEDIUM|HIGH|CRITICAL>] [--attempts <n>] [--max-attempts <n>]\n' +
+  '       [--approval <json>]\n' +
   '\n' +
   'Options:\n' +
   '  --manifest <file>        Path to the evidence manifest JSON file (required)\n' +
@@ -48,9 +56,12 @@ const USAGE =
   '  --output <file>          Path to write the result JSON (default: stdout)\n' +
   '  --approval <json>        Human approval token JSON {signedAt, approver, reason, signature}\n' +
   '  --changed-files <list>   Comma-separated list of changed file paths for post-diff risk\n' +
+  '  --risk <level>           Explicit LOW|MEDIUM|HIGH|CRITICAL risk from control plane\n' +
+  '  --attempts <n>           Current attempt count (default 0)\n' +
+  '  --max-attempts <n>       Maximum repair attempts before ESCALATE (default 3)\n' +
   '  --help                   Show this help message and exit\n' +
   '\n' +
-  'Exit codes: 0=PASS, 1=FAIL, 2=USAGE_ERROR';
+  'Exit codes: 0=PASS, 1=REPAIR/ESCALATE/BLOCK, 2=USAGE_ERROR';
 
 /** Injectable filesystem + stdio surface so the CLI logic is testable. */
 export interface CliIo {
@@ -73,6 +84,9 @@ export interface CliOptions {
   readonly outputPath?: string;
   readonly approvalToken?: string;
   readonly changedFiles?: string[];
+  readonly explicitRisk?: string;
+  readonly attempts: number;
+  readonly maxAttempts: number;
 }
 
 /** Usage error: bad invocation. Maps to exit code 2. */
@@ -105,6 +119,9 @@ type MutableCliOptions = {
   outputPath?: string;
   approvalToken?: string;
   changedFiles?: string[];
+  explicitRisk?: string;
+  attempts?: number;
+  maxAttempts?: number;
 };
 
 export const parseArgs = (argv: readonly string[]): CliOptions => {
@@ -148,6 +165,12 @@ export const parseArgs = (argv: readonly string[]): CliOptions => {
   if (opts.policyVersion === undefined) {
     throw new UsageError('--policy-version is required');
   }
+  if (opts.attempts === undefined) {
+    opts.attempts = 0;
+  }
+  if (opts.maxAttempts === undefined) {
+    opts.maxAttempts = 3;
+  }
   return opts as CliOptions;
 };
 
@@ -171,40 +194,52 @@ const setFlag = (opts: MutableCliOptions, name: KnownFlag, value: string): void 
     case '--changed-files':
       opts.changedFiles = value.split(',').map((s) => s.trim()).filter((s) => s.length > 0);
       break;
+    case '--risk':
+      opts.explicitRisk = value;
+      break;
+    case '--attempts':
+      opts.attempts = parseInt(value, 10);
+      break;
+    case '--max-attempts':
+      opts.maxAttempts = parseInt(value, 10);
+      break;
+    case '--help':
+      break;
   }
 };
 
 /** Stable, machine-readable result JSON. No manifest or source content. */
 export interface GateResultJson {
-  readonly decision: PolicyResult['decision'];
-  readonly reasonCode: PolicyResult['reasonCode'];
+  readonly decision: 'pass' | 'fail';
+  readonly gate: GateOutcome;
+  readonly reasonCode: string;
+  readonly riskLevel: string;
+  readonly requiredGates: readonly string[];
   readonly policyVersion: string;
   readonly evidenceIdentity?: string;
   readonly detail: string;
 }
 
 /**
- * Project a {@link PolicyResult} into the stable JSON shape emitted by the CLI.
+ * Project a {@link GateEngineResult} into the stable JSON shape emitted by the CLI.
  * `evidenceIdentity` is included only when present; `manifest` is never included.
  */
-export const formatResult = (result: { decision: string; reasonCode: string; policyVersion: string; evidenceIdentity?: string; detail: string }): GateResultJson => {
+export const formatResult = (result: GateEngineResult): GateResultJson => {
   // Fixed key order for stable serialization:
-  //   decision, reasonCode, policyVersion, evidenceIdentity?, detail
-  if (result.evidenceIdentity !== undefined) {
-    return {
-      decision: result.decision as PolicyResult['decision'],
-      reasonCode: result.reasonCode as PolicyResult['reasonCode'],
-      policyVersion: result.policyVersion,
-      evidenceIdentity: result.evidenceIdentity,
-      detail: result.detail,
-    };
-  }
-  return {
-    decision: result.decision as PolicyResult['decision'],
-    reasonCode: result.reasonCode as PolicyResult['reasonCode'],
+  //   decision, gate, reasonCode, riskLevel, requiredGates, policyVersion, evidenceIdentity?, detail
+  const base = {
+    decision: result.decision,
+    gate: result.gate,
+    reasonCode: result.reasonCode,
+    riskLevel: result.riskLevel,
+    requiredGates: result.requiredGates,
     policyVersion: result.policyVersion,
     detail: result.detail,
   };
+  if (result.evidenceIdentity !== undefined) {
+    return { ...base, evidenceIdentity: result.evidenceIdentity };
+  }
+  return base;
 };
 
 const safeError = (io: CliIo, message: string): void => {
@@ -212,18 +247,16 @@ const safeError = (io: CliIo, message: string): void => {
   io.stderr.write(`${message}\n`);
 };
 
-/** Write result JSON to output (file or stdout). */
-const writeResult = (io: CliIo, outputPath: string | undefined, json: string): void => {
-  if (outputPath !== undefined) {
-    io.writeFileSync(outputPath, json, 'utf8');
-  } else {
-    io.stdout.write(json);
-  }
+
+
+const isValidRisk = (risk: string): boolean => {
+  const upper = risk.trim().toUpperCase();
+  return ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'].includes(upper);
 };
 
 /**
  * Run the CLI against an argv list and an injectable IO surface.
- * Returns the process exit code (0 pass, 1 policy fail, 2 usage/operational).
+ * Returns the process exit code (0 pass, 1 non-pass, 2 usage/operational).
  * Never throws — all errors are mapped to an exit code and a safe stderr line.
  */
 export const runCli = (argv: readonly string[], io: CliIo): number => {
@@ -258,6 +291,21 @@ export const runCli = (argv: readonly string[], io: CliIo): number => {
     safeError(io, '--policy-version must be a semver string');
     return 2;
   }
+  if (opts.explicitRisk !== undefined && !isValidRisk(opts.explicitRisk)) {
+    safeError(io, USAGE);
+    safeError(io, '--risk must be one of LOW, MEDIUM, HIGH, CRITICAL');
+    return 2;
+  }
+  if (!Number.isInteger(opts.attempts) || opts.attempts < 0) {
+    safeError(io, USAGE);
+    safeError(io, '--attempts must be a non-negative integer');
+    return 2;
+  }
+  if (!Number.isInteger(opts.maxAttempts) || opts.maxAttempts < 1) {
+    safeError(io, USAGE);
+    safeError(io, '--max-attempts must be a positive integer');
+    return 2;
+  }
 
   // Read the manifest file. Reject missing paths and non-file paths.
   let raw: string;
@@ -283,46 +331,34 @@ export const runCli = (argv: readonly string[], io: CliIo): number => {
     return 2;
   }
 
-  // Evaluate. The evaluator is pure and never throws on bad input.
-    const result = evaluatePolicy(parsed, {
-      expectedHeadSha: opts.headSha,
-      policyVersion: opts.policyVersion,
-    });
-
-    // Post-diff risk recalculation: escalate when changed files touch sensitive paths.
-    const riskClass: RiskClass = opts.changedFiles && opts.changedFiles.length > 0
-      ? recalculatePostDiffRisk(opts.changedFiles, classifyFromPolicyResult(result))
-      : classifyFromPolicyResult(result);
-
-    // Human approval gate: check if the risk class requires human approval.
-    if (riskClass === 'human-required') {
-      if (opts.approvalToken === undefined) {
-        // No token → block with HUMAN_APPROVAL_REQUIRED.
-        const blocked = {
-          decision: 'fail',
-          reasonCode: 'HUMAN_APPROVAL_REQUIRED',
-          policyVersion: opts.policyVersion,
-          detail: `human approval required for risk class: ${riskClass}`,
-        };
-        writeResult(io, opts.outputPath, `${JSON.stringify(formatResult(blocked), null, 2)}\n`);
-        return 1;
-      }
-      // Parse and validate the approval token.
-      let token: HumanApprovalToken;
-      try {
-        token = JSON.parse(opts.approvalToken);
-      } catch {
-        safeError(io, USAGE);
-        safeError(io, '--approval must be valid JSON');
-        return 2;
-      }
-      if (!token.signedAt || !token.approver || !token.reason || !token.signature) {
-        safeError(io, USAGE);
-        safeError(io, '--approval must be a valid JSON token with signedAt, approver, reason, and signature');
-        return 2;
-      }
-      // Token is valid — proceed with the original evaluation result.
+  // Parse optional approval token.
+  let approval: HumanApprovalToken | undefined;
+  if (opts.approvalToken !== undefined) {
+    try {
+      approval = JSON.parse(opts.approvalToken) as HumanApprovalToken;
+    } catch {
+      safeError(io, USAGE);
+      safeError(io, '--approval must be valid JSON');
+      return 2;
     }
+    if (!approval || !approval.signedAt || !approval.approver || !approval.reason || !approval.signature) {
+      safeError(io, USAGE);
+      safeError(io, '--approval must be a valid JSON token with signedAt, approver, reason, and signature');
+      return 2;
+    }
+  }
+
+  // Evaluate the 4-way gate.
+  const result = evaluateGate({
+    manifest: parsed,
+    expectedHeadSha: opts.headSha,
+    policyVersion: opts.policyVersion,
+    changedFiles: opts.changedFiles,
+    attempts: opts.attempts,
+    maxAttempts: opts.maxAttempts,
+    explicitRisk: opts.explicitRisk ? normalizeRiskLevel(opts.explicitRisk) : undefined,
+    approval,
+  });
 
   const json = `${JSON.stringify(formatResult(result), null, 2)}\n`;
 
@@ -347,5 +383,5 @@ export const runCli = (argv: readonly string[], io: CliIo): number => {
     io.stdout.write(json);
   }
 
-  return result.decision === 'pass' ? 0 : 1;
+  return result.gate === 'PASS' ? 0 : 1;
 };

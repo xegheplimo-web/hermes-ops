@@ -46,15 +46,8 @@ export const TERMINAL_AGENT_RUN_STATUSES: readonly AgentRunStatus[] = [
   'timed_out',
 ] as const;
 
-/** A risk level used to route model selection and budget. */
-export type RiskLevel = 'LOW' | 'MEDIUM' | 'HIGH' | 'CRITICAL';
-
-export const RISK_LEVELS: readonly RiskLevel[] = [
-  'LOW',
-  'MEDIUM',
-  'HIGH',
-  'CRITICAL',
-] as const;
+import { type RiskLevel, RISK_LEVELS } from '@hermes-ops/contracts';
+export { type RiskLevel, RISK_LEVELS } from '@hermes-ops/contracts';
 
 /**
  * Structured output contract. Adapters that require structured output MUST

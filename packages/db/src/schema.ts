@@ -177,6 +177,18 @@ export interface AuditEventRow {
   readonly created_at: Date;
 }
 
+/** `approvals` row. Durable human sign-off for CRITICAL-risk tasks. */
+export interface ApprovalRow {
+  readonly id: number;
+  readonly task_id: number;
+  readonly signed_at: Date;
+  readonly approver: string;
+  readonly reason: string;
+  readonly signature: string;
+  readonly status: 'pending' | 'approved' | 'rejected';
+  readonly created_at: Date;
+}
+
 /* -------------------------------------------------------------------------- */
 /* Migration catalog                                                          */
 /* -------------------------------------------------------------------------- */
@@ -189,6 +201,7 @@ export const MIGRATION_FILES: readonly string[] = [
   '0004_init_evidence.sql',
   '0005_init_audit_events.sql',
   '0006_expand_task_statuses.sql',
+  '0007_create_approvals.sql',
 ] as const;
 
 /** Table each migration creates, keyed by filename. */
@@ -201,5 +214,6 @@ export const MIGRATION_TABLES: ReadonlyMap<string, string> = new Map<
   ['0003_init_agent_runs.sql', 'agent_runs'],
   ['0004_init_evidence.sql', 'evidence'],
   ['0005_init_audit_events.sql', 'audit_events'],
-    ['0006_expand_task_statuses.sql', 'tasks'],
-  ]);
+  ['0006_expand_task_statuses.sql', 'tasks'],
+  ['0007_create_approvals.sql', 'approvals'],
+]);

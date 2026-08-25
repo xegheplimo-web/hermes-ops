@@ -37,6 +37,7 @@ describe('migrations — ordering and presence', () => {
           '0004_init_evidence.sql',
           '0005_init_audit_events.sql',
           '0006_expand_task_statuses.sql',
+          '0007_create_approvals.sql',
         ]);
   });
 

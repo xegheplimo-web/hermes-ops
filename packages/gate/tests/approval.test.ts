@@ -57,7 +57,7 @@ const run = (args: readonly string[]): RunResult => {
 let workDir: string;
 
 beforeAll(() => {
-  execFileSync('pnpm', ['build'], {
+  execFileSync('npm', ['run', 'build'], {
     cwd: repoRoot,
     stdio: 'pipe',
     shell: true,

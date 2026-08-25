@@ -62,6 +62,19 @@ class AuditEvent:
     detail: dict = field(default_factory=dict)
 
 
+@dataclass
+class Approval:
+    """Durable human approval record for a CRITICAL-risk task."""
+    id: int | None = None
+    task_id: int | None = None
+    signed_at: datetime | None = None
+    approver: str = ""
+    reason: str = ""
+    signature: str = ""
+    status: str = "pending"
+    created_at: datetime | None = None
+
+
 # ── Status constants ─────────────────────────────────────────────────────────
 
 # Task lifecycle states (see migration 0006)
@@ -520,3 +533,95 @@ class OpsDbAdapter:
         for row in cur.fetchall():
             tasks.append(self._row_to_task(row, cur))
         return tasks
+
+    # ── Durable approvals ───────────────────────────────────────────────
+
+    def request_approval(
+        self,
+        task_id: int,
+        approver: str = "",
+        reason: str = "",
+        signature: str = "",
+    ) -> Approval:
+        """Create a pending approval record. Returns the approval."""
+        cur = self.conn.cursor()
+        try:
+            signed_at = datetime.now(timezone.utc)
+            cur.execute("""
+                INSERT INTO approvals
+                    (task_id, signed_at, approver, reason, signature, status)
+                VALUES (%s, %s, %s, %s, %s, %s)
+                RETURNING id, task_id, signed_at, approver, reason, signature, status, created_at
+            """, (
+                task_id, signed_at, approver, reason, signature, "pending",
+            ))
+            row = cur.fetchone()
+            return self._row_to_approval(row, cur)
+        finally:
+            cur.close()
+
+    def resolve_approval(
+        self,
+        approval_id: int,
+        status: str,
+    ) -> Approval | None:
+        """Resolve a pending approval to 'approved' or 'rejected'."""
+        if status not in ("approved", "rejected"):
+            raise ValueError(f"Invalid approval status: {status}")
+        cur = self.conn.cursor()
+        try:
+            cur.execute("""
+                UPDATE approvals
+                SET status = %s
+                WHERE id = %s
+                RETURNING id, task_id, signed_at, approver, reason, signature, status, created_at
+            """, (status, approval_id))
+            row = cur.fetchone()
+            if not row:
+                return None
+            return self._row_to_approval(row, cur)
+        finally:
+            cur.close()
+
+    def get_approvals_for_task(self, task_id: int) -> list[Approval]:
+        """Get all approval records for a task, newest first."""
+        cur = self.conn.cursor()
+        try:
+            cur.execute("""
+                SELECT id, task_id, signed_at, approver, reason, signature, status, created_at
+                FROM approvals
+                WHERE task_id = %s
+                ORDER BY created_at DESC
+            """, (task_id,))
+            return [self._row_to_approval(row, cur) for row in cur.fetchall()]
+        finally:
+            cur.close()
+
+    def is_approved(self, task_id: int) -> bool:
+        """Return True if the task has at least one 'approved' record."""
+        cur = self.conn.cursor()
+        try:
+            cur.execute("""
+                SELECT EXISTS (
+                    SELECT 1 FROM approvals
+                    WHERE task_id = %s AND status = 'approved'
+                )
+            """, (task_id,))
+            return bool(cur.fetchone()[0])
+        finally:
+            cur.close()
+
+    def _row_to_approval(self, row: tuple, cur: Any) -> Approval:
+        """Convert a DB row to an Approval."""
+        cols = [desc[0] for desc in cur.description]
+        data = dict(zip(cols, row))
+        return Approval(
+            id=data.get("id"),
+            task_id=data.get("task_id"),
+            signed_at=data.get("signed_at"),
+            approver=data.get("approver") or "",
+            reason=data.get("reason") or "",
+            signature=data.get("signature") or "",
+            status=data.get("status") or "pending",
+            created_at=data.get("created_at"),
+        )

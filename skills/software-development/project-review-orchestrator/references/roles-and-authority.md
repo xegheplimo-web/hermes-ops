@@ -128,6 +128,13 @@ Final risk is the **only** risk input to the gate. One contract:
 Downgrade rule: risk may be lowered **only** with explicit evidence (all tests
 pass, all findings resolved). Never lowered to bypass a reviewer.
 
+Implementation: canonical risk and `RISK_LEVELS` live in `packages/contracts/src/risk.ts`
+and are exported via `@hermes-ops/contracts`. The 4-way gate engine is implemented
+in `packages/gate/src/engine.ts` and exposed by the `hermes-policy-gate` CLI
+(`packages/gate/src/cli.ts`) with `--risk`, `--attempts`, `--max-attempts` and
+`--approval`. Python calls the binary through `scripts/policy_gate.py`. Durable
+human approval is stored in the `approvals` table and managed by `scripts/ops_adapter.py`.
+
 ---
 
 ## 6. Hard invariants

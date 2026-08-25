@@ -9,7 +9,7 @@ import type { PolicyResult } from '../src/evaluator.js';
 // ─── Pure function: single signals ──────────────────────────────────────────
 
 describe('classifyRisk — single true signals', () => {
-  it('ciFailure → auto-eligible', () => {
+  it('ciFailure → LOW', () => {
     const signals: RiskSignal = {
       ciFailure: true,
       unresolvedCritical: false,
@@ -17,10 +17,10 @@ describe('classifyRisk — single true signals', () => {
       duplicateEvidence: false,
       touchesAuth: false,
     };
-    expect(classifyRisk(signals)).toBe('auto-eligible');
+    expect(classifyRisk(signals)).toBe('LOW');
   });
 
-  it('unresolvedCritical → human-required', () => {
+  it('unresolvedCritical → CRITICAL', () => {
     const signals: RiskSignal = {
       ciFailure: false,
       unresolvedCritical: true,
@@ -28,10 +28,10 @@ describe('classifyRisk — single true signals', () => {
       duplicateEvidence: false,
       touchesAuth: false,
     };
-    expect(classifyRisk(signals)).toBe('human-required');
+    expect(classifyRisk(signals)).toBe('CRITICAL');
   });
 
-  it('policyMismatch → human-required', () => {
+  it('policyMismatch → CRITICAL', () => {
     const signals: RiskSignal = {
       ciFailure: false,
       unresolvedCritical: false,
@@ -39,10 +39,10 @@ describe('classifyRisk — single true signals', () => {
       duplicateEvidence: false,
       touchesAuth: false,
     };
-    expect(classifyRisk(signals)).toBe('human-required');
+    expect(classifyRisk(signals)).toBe('CRITICAL');
   });
 
-  it('duplicateEvidence → auto-eligible', () => {
+  it('duplicateEvidence → LOW', () => {
     const signals: RiskSignal = {
       ciFailure: false,
       unresolvedCritical: false,
@@ -50,10 +50,10 @@ describe('classifyRisk — single true signals', () => {
       duplicateEvidence: true,
       touchesAuth: false,
     };
-    expect(classifyRisk(signals)).toBe('auto-eligible');
+    expect(classifyRisk(signals)).toBe('LOW');
   });
 
-  it('touchesAuth → human-required', () => {
+  it('touchesAuth → HIGH', () => {
     const signals: RiskSignal = {
       ciFailure: false,
       unresolvedCritical: false,
@@ -61,10 +61,10 @@ describe('classifyRisk — single true signals', () => {
       duplicateEvidence: false,
       touchesAuth: true,
     };
-    expect(classifyRisk(signals)).toBe('human-required');
+    expect(classifyRisk(signals)).toBe('HIGH');
   });
 
-  it('no signals → auto-eligible', () => {
+  it('no signals → LOW', () => {
     const signals: RiskSignal = {
       ciFailure: false,
       unresolvedCritical: false,
@@ -72,7 +72,7 @@ describe('classifyRisk — single true signals', () => {
       duplicateEvidence: false,
       touchesAuth: false,
     };
-    expect(classifyRisk(signals)).toBe('auto-eligible');
+    expect(classifyRisk(signals)).toBe('LOW');
   });
 });
 
@@ -87,7 +87,7 @@ describe('classifyRisk — first failure wins ordering', () => {
       duplicateEvidence: false,
       touchesAuth: false,
     };
-    expect(classifyRisk(signals)).toBe('auto-eligible'); // ciFailure checked first
+    expect(classifyRisk(signals)).toBe('LOW'); // ciFailure checked first
   });
 
   it('ciFailure wins over all others', () => {
@@ -98,7 +98,7 @@ describe('classifyRisk — first failure wins ordering', () => {
       duplicateEvidence: true,
       touchesAuth: true,
     };
-    expect(classifyRisk(signals)).toBe('auto-eligible');
+    expect(classifyRisk(signals)).toBe('LOW');
   });
 
   it('unresolvedCritical wins over policyMismatch', () => {
@@ -109,7 +109,7 @@ describe('classifyRisk — first failure wins ordering', () => {
       duplicateEvidence: false,
       touchesAuth: false,
     };
-    expect(classifyRisk(signals)).toBe('human-required');
+    expect(classifyRisk(signals)).toBe('CRITICAL');
   });
 
   it('unresolvedCritical wins over duplicateEvidence', () => {
@@ -120,7 +120,7 @@ describe('classifyRisk — first failure wins ordering', () => {
       duplicateEvidence: true,
       touchesAuth: false,
     };
-    expect(classifyRisk(signals)).toBe('human-required');
+    expect(classifyRisk(signals)).toBe('CRITICAL');
   });
 
   it('policyMismatch wins over duplicateEvidence', () => {
@@ -131,7 +131,7 @@ describe('classifyRisk — first failure wins ordering', () => {
       duplicateEvidence: true,
       touchesAuth: false,
     };
-    expect(classifyRisk(signals)).toBe('human-required');
+    expect(classifyRisk(signals)).toBe('CRITICAL');
   });
 
   it('duplicateEvidence wins over touchesAuth', () => {
@@ -142,7 +142,7 @@ describe('classifyRisk — first failure wins ordering', () => {
       duplicateEvidence: true,
       touchesAuth: true,
     };
-    expect(classifyRisk(signals)).toBe('auto-eligible'); // duplicateEvidence checked before touchesAuth
+    expect(classifyRisk(signals)).toBe('LOW'); // duplicateEvidence checked before touchesAuth
   });
 });
 
@@ -162,7 +162,7 @@ describe('classifyRisk — pure / deterministic', () => {
     const c = classifyRisk(signals);
     expect(a).toBe(b);
     expect(b).toBe(c);
-    expect(a).toBe('human-required');
+    expect(a).toBe('CRITICAL');
   });
 
   it('does not mutate the input signal object', () => {
@@ -189,48 +189,48 @@ describe('classifyFromPolicyResult', () => {
     detail: 'test',
   });
 
-  it('CI_NOT_GREEN → auto-eligible', () => {
+  it('CI_NOT_GREEN → LOW', () => {
     const r = makeResult('CI_NOT_GREEN');
-    expect(classifyFromPolicyResult(r)).toBe('auto-eligible');
+    expect(classifyFromPolicyResult(r)).toBe('LOW');
   });
 
-  it('UNRESOLVED_CRITICAL_FINDING → human-required', () => {
+  it('UNRESOLVED_CRITICAL_FINDING → CRITICAL', () => {
     const r = makeResult('UNRESOLVED_CRITICAL_FINDING');
-    expect(classifyFromPolicyResult(r)).toBe('human-required');
+    expect(classifyFromPolicyResult(r)).toBe('CRITICAL');
   });
 
-  it('POLICY_VERSION_MISMATCH → human-required', () => {
+  it('POLICY_VERSION_MISMATCH → CRITICAL', () => {
     const r = makeResult('POLICY_VERSION_MISMATCH');
-    expect(classifyFromPolicyResult(r)).toBe('human-required');
+    expect(classifyFromPolicyResult(r)).toBe('CRITICAL');
   });
 
-  it('DUPLICATE_EVIDENCE → auto-eligible', () => {
+  it('DUPLICATE_EVIDENCE → LOW', () => {
     const r = makeResult('DUPLICATE_EVIDENCE');
-    expect(classifyFromPolicyResult(r)).toBe('auto-eligible');
+    expect(classifyFromPolicyResult(r)).toBe('LOW');
   });
 
-  it('PASS → auto-eligible', () => {
+  it('PASS → LOW', () => {
     const r = makeResult('PASS');
-    expect(classifyFromPolicyResult(r)).toBe('auto-eligible');
+    expect(classifyFromPolicyResult(r)).toBe('LOW');
   });
 
-  it('EVIDENCE_INVALID → auto-eligible', () => {
+  it('EVIDENCE_INVALID → MEDIUM', () => {
     const r = makeResult('EVIDENCE_INVALID');
-    expect(classifyFromPolicyResult(r)).toBe('auto-eligible');
+    expect(classifyFromPolicyResult(r)).toBe('MEDIUM');
   });
 
-  it('EVIDENCE_STALE → auto-eligible', () => {
+  it('EVIDENCE_STALE → MEDIUM', () => {
     const r = makeResult('EVIDENCE_STALE');
-    expect(classifyFromPolicyResult(r)).toBe('auto-eligible');
+    expect(classifyFromPolicyResult(r)).toBe('MEDIUM');
   });
 
-  it('HEAD_SHA_MISMATCH → auto-eligible', () => {
+  it('HEAD_SHA_MISMATCH → MEDIUM', () => {
     const r = makeResult('HEAD_SHA_MISMATCH');
-    expect(classifyFromPolicyResult(r)).toBe('auto-eligible');
+    expect(classifyFromPolicyResult(r)).toBe('MEDIUM');
   });
 
-  it('HUMAN_APPROVAL_REQUIRED → auto-eligible', () => {
+  it('HUMAN_APPROVAL_REQUIRED → MEDIUM', () => {
     const r = makeResult('HUMAN_APPROVAL_REQUIRED');
-    expect(classifyFromPolicyResult(r)).toBe('auto-eligible');
+    expect(classifyFromPolicyResult(r)).toBe('MEDIUM');
   });
 });

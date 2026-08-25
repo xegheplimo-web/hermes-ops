@@ -41,6 +41,9 @@ importers:
 
   packages/gate:
     dependencies:
+      '@hermes-ops/contracts':
+        specifier: workspace:*
+        version: link:../contracts
       '@hermes-ops/policy':
         specifier: workspace:*
         version: link:../policy

@@ -41,158 +41,158 @@ describe('SENSITIVE_PATTERNS', () => {
 
 // ─── recalculatePostDiffRisk — no escalation ─────────────────────────────────
 
-describe('recalculatePostDiffRisk — keeps original class', () => {
-  it('normal file change (no sensitive path) keeps auto-eligible', () => {
+describe('recalculatePostDiffRisk — keeps original risk', () => {
+  it('normal file change (no sensitive path) keeps LOW', () => {
     const result = recalculatePostDiffRisk(
       ['src/utils/helpers.ts', 'README.md'],
-      'auto-eligible',
+      'LOW',
     );
-    expect(result).toBe('auto-eligible');
+    expect(result).toBe('LOW');
   });
 
-  it('normal file change (no sensitive path) keeps human-required', () => {
+  it('normal file change (no sensitive path) keeps CRITICAL', () => {
     const result = recalculatePostDiffRisk(
       ['src/utils/helpers.ts'],
-      'human-required',
+      'CRITICAL',
     );
-    expect(result).toBe('human-required');
+    expect(result).toBe('CRITICAL');
   });
 
-  it('empty path list keeps original class', () => {
-    const result = recalculatePostDiffRisk([], 'auto-eligible');
-    expect(result).toBe('auto-eligible');
+  it('empty path list keeps original risk', () => {
+    const result = recalculatePostDiffRisk([], 'LOW');
+    expect(result).toBe('LOW');
   });
 
   it('path with harmless substring like "author" does not falsely trigger', () => {
     const result = recalculatePostDiffRisk(
       ['docs/AUTHOR.md', 'src/authorization.ts'],
-      'auto-eligible',
+      'LOW',
     );
-    expect(result).toBe('auto-eligible');
+    expect(result).toBe('LOW');
   });
 });
 
 // ─── recalculatePostDiffRisk — escalation ────────────────────────────────────
 
-describe('recalculatePostDiffRisk — escalates to human-required', () => {
+describe('recalculatePostDiffRisk — escalates to CRITICAL', () => {
   it('file touching "auth" → escalates', () => {
     const result = recalculatePostDiffRisk(
       ['src/auth/login.ts'],
-      'auto-eligible',
+      'LOW',
     );
-    expect(result).toBe('human-required');
+    expect(result).toBe('CRITICAL');
   });
 
   it('file touching "oauth" → escalates', () => {
     const result = recalculatePostDiffRisk(
       ['services/oauth/provider.ts'],
-      'auto-eligible',
+      'LOW',
     );
-    expect(result).toBe('human-required');
+    expect(result).toBe('CRITICAL');
   });
 
   it('file touching "login" → escalates', () => {
     const result = recalculatePostDiffRisk(
       ['pages/login.tsx'],
-      'auto-eligible',
+      'LOW',
     );
-    expect(result).toBe('human-required');
+    expect(result).toBe('CRITICAL');
   });
 
   it('file touching "credential" → escalates', () => {
     const result = recalculatePostDiffRisk(
       ['infra/credential-manager.ts'],
-      'auto-eligible',
+      'LOW',
     );
-    expect(result).toBe('human-required');
+    expect(result).toBe('CRITICAL');
   });
 
   it('file touching "secret" → escalates', () => {
     const result = recalculatePostDiffRisk(
       ['config/secrets.env'],
-      'auto-eligible',
+      'LOW',
     );
-    expect(result).toBe('human-required');
+    expect(result).toBe('CRITICAL');
   });
 
   it('file touching "token" → escalates', () => {
     const result = recalculatePostDiffRisk(
       ['src/token-service.ts'],
-      'auto-eligible',
+      'LOW',
     );
-    expect(result).toBe('human-required');
+    expect(result).toBe('CRITICAL');
   });
 
   it('file touching "permission" → escalates', () => {
     const result = recalculatePostDiffRisk(
       ['rbac/permissions.ts'],
-      'auto-eligible',
+      'LOW',
     );
-    expect(result).toBe('human-required');
+    expect(result).toBe('CRITICAL');
   });
 
   it('file touching "security" → escalates', () => {
     const result = recalculatePostDiffRisk(
       ['security/audit-log.ts'],
-      'auto-eligible',
+      'LOW',
     );
-    expect(result).toBe('human-required');
+    expect(result).toBe('CRITICAL');
   });
 
   it('file touching "billing" → escalates', () => {
     const result = recalculatePostDiffRisk(
       ['services/billing.ts'],
-      'auto-eligible',
+      'LOW',
     );
-    expect(result).toBe('human-required');
+    expect(result).toBe('CRITICAL');
   });
 
   it('file touching "payment" → escalates', () => {
     const result = recalculatePostDiffRisk(
       ['payment/processor.ts'],
-      'auto-eligible',
+      'LOW',
     );
-    expect(result).toBe('human-required');
+    expect(result).toBe('CRITICAL');
   });
 
   it('file touching "migration" → escalates', () => {
     const result = recalculatePostDiffRisk(
       ['db/migrations/001.ts'],
-      'auto-eligible',
+      'LOW',
     );
-    expect(result).toBe('human-required');
+    expect(result).toBe('CRITICAL');
   });
 
   it('file touching "deploy" → escalates', () => {
     const result = recalculatePostDiffRisk(
       ['deploy/production.yml'],
-      'auto-eligible',
+      'LOW',
     );
-    expect(result).toBe('human-required');
+    expect(result).toBe('CRITICAL');
   });
 
   it('file touching "production" → escalates', () => {
     const result = recalculatePostDiffRisk(
       ['config/production.ts'],
-      'auto-eligible',
+      'LOW',
     );
-    expect(result).toBe('human-required');
+    expect(result).toBe('CRITICAL');
   });
 
   it('file touching "policy" → escalates', () => {
     const result = recalculatePostDiffRisk(
       ['policies/access.json'],
-      'auto-eligible',
+      'LOW',
     );
-    expect(result).toBe('human-required');
+    expect(result).toBe('CRITICAL');
   });
 
   it('file touching "gate" → escalates', () => {
     const result = recalculatePostDiffRisk(
       ['src/gate/config.ts'],
-      'auto-eligible',
+      'LOW',
     );
-    expect(result).toBe('human-required');
+    expect(result).toBe('CRITICAL');
   });
 });
 
@@ -202,45 +202,45 @@ describe('recalculatePostDiffRisk — multiple files', () => {
   it('multiple files, one sensitive → escalates', () => {
     const result = recalculatePostDiffRisk(
       ['src/components/Button.tsx', 'src/utils/helpers.ts', 'src/auth/login.ts'],
-      'auto-eligible',
+      'LOW',
     );
-    expect(result).toBe('human-required');
+    expect(result).toBe('CRITICAL');
   });
 
   it('multiple files, first is sensitive → escalates', () => {
     const result = recalculatePostDiffRisk(
       ['src/auth/login.ts', 'src/components/Button.tsx'],
-      'auto-eligible',
+      'LOW',
     );
-    expect(result).toBe('human-required');
+    expect(result).toBe('CRITICAL');
   });
 
   it('multiple files, last is sensitive → escalates', () => {
     const result = recalculatePostDiffRisk(
       ['src/components/Button.tsx', 'src/auth/login.ts'],
-      'auto-eligible',
+      'LOW',
     );
-    expect(result).toBe('human-required');
+    expect(result).toBe('CRITICAL');
   });
 });
 
 // ─── recalculatePostDiffRisk — escalation overrides original class ───────────
 
-describe('recalculatePostDiffRisk — escalation overrides original class', () => {
-  it('escalation overrides auto-eligible → human-required', () => {
+describe('recalculatePostDiffRisk — escalation overrides original risk', () => {
+  it('escalation overrides LOW → CRITICAL', () => {
     const result = recalculatePostDiffRisk(
       ['src/credentials/keys.ts'],
-      'auto-eligible',
+      'LOW',
     );
-    expect(result).toBe('human-required');
+    expect(result).toBe('CRITICAL');
   });
 
-  it('escalation overrides even if original class is already human-required', () => {
+  it('escalation overrides even if original risk is already CRITICAL', () => {
     const result = recalculatePostDiffRisk(
       ['src/credentials/keys.ts'],
-      'human-required',
+      'CRITICAL',
     );
-    expect(result).toBe('human-required');
+    expect(result).toBe('CRITICAL');
   });
 });
 
@@ -249,25 +249,25 @@ describe('recalculatePostDiffRisk — escalation overrides original class', () =
 describe('recalculatePostDiffRisk — pure / deterministic', () => {
   it('returns the same result for the same input every time', () => {
     const paths = ['src/auth/login.ts'];
-    const a = recalculatePostDiffRisk(paths, 'auto-eligible');
-    const b = recalculatePostDiffRisk(paths, 'auto-eligible');
-    const c = recalculatePostDiffRisk(paths, 'auto-eligible');
+    const a = recalculatePostDiffRisk(paths, 'LOW');
+    const b = recalculatePostDiffRisk(paths, 'LOW');
+    const c = recalculatePostDiffRisk(paths, 'LOW');
     expect(a).toBe(b);
     expect(b).toBe(c);
-    expect(a).toBe('human-required');
+    expect(a).toBe('CRITICAL');
   });
 
   it('does not mutate the input array', () => {
     const paths = ['src/auth/login.ts', 'src/utils/helpers.ts'];
     const before = [...paths];
-    recalculatePostDiffRisk(paths, 'auto-eligible');
+    recalculatePostDiffRisk(paths, 'LOW');
     expect(paths).toEqual(before);
   });
 
   it('does not mutate the input array even when no match', () => {
     const paths = ['src/utils/helpers.ts'];
     const before = [...paths];
-    recalculatePostDiffRisk(paths, 'auto-eligible');
+    recalculatePostDiffRisk(paths, 'LOW');
     expect(paths).toEqual(before);
   });
 });

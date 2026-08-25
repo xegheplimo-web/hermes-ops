@@ -54,7 +54,7 @@ let workDir: string;
 beforeAll(() => {
   // Build the workspace so the gate bin and its dependency dists exist for
   // subprocess execution. `tsc -b` is incremental and idempotent.
-  execFileSync('pnpm', ['build'], {
+  execFileSync('npm', ['run', 'build'], {
     cwd: repoRoot,
     stdio: 'pipe',
     shell: true,
@@ -361,17 +361,20 @@ describe('hermes-policy-gate — stable output', () => {
     expect(a.stdout).toBe(b.stdout);
   });
 
-  it('emits keys in a fixed order: decision, reasonCode, policyVersion, evidenceIdentity, detail', () => {
+  it('emits keys in a fixed order: decision, gate, reasonCode, riskLevel, requiredGates, policyVersion, detail, evidenceIdentity', () => {
     const p = writeManifest('order.json', validManifest());
     const r = run(['--manifest', p, '--head-sha', HEAD_SHA, '--policy-version', POLICY_VERSION]);
     expect(r.status).toBe(0);
     const keys = Object.keys(parseJson(r.stdout) as Record<string, unknown>);
     expect(keys).toEqual([
       'decision',
+      'gate',
       'reasonCode',
+      'riskLevel',
+      'requiredGates',
       'policyVersion',
-      'evidenceIdentity',
       'detail',
+      'evidenceIdentity',
     ]);
   });
 });

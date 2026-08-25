@@ -1,17 +1,18 @@
 /**
- * Risk Classifier — maps risk signals to 'auto-eligible' or 'human-required'.
+ * Risk Classifier — maps policy reason codes to canonical 4-level Hermes risk.
  *
- * This replaces the unimplemented full LOW/MED/HIGH/CRITICAL routing with
- * a simple, deterministic binary classifier.
+ * This unifies the TypeScript policy evaluator with the Python risk engine
+ * (final_risk.py / task_classifier.py), which both speak LOW/MEDIUM/HIGH/CRITICAL.
  */
 
 import {
-  type PolicyReasonCode,
-  type PolicyResult,
-} from './evaluator.js';
+  type RiskLevel,
+  RISK_ORDER,
+  reasonCodeToRiskLevel,
+} from '@hermes-ops/contracts';
+import type { PolicyReasonCode, PolicyResult } from './evaluator.js';
 
-/** Binary classification of risk. */
-export type RiskClass = 'auto-eligible' | 'human-required';
+export type { RiskLevel } from '@hermes-ops/contracts';
 
 /** Input signals for the classifier. */
 export interface RiskSignal {
@@ -31,55 +32,32 @@ export interface RiskSignal {
  * Pure function: classify a set of risk signals.
  *
  * Order of checks (first match wins):
- *   1. CI failure → auto-eligible (retry is safe and expected)
- *   2. Unresolved critical finding → human-required
- *   3. Policy version mismatch → human-required
- *   4. Duplicate evidence → auto-eligible (retry)
- *   5. Touches auth/credentials → human-required
- *   6. No signals set → auto-eligible (no risk)
+ *   1. CI failure → LOW (repairable)
+ *   2. Unresolved critical finding → CRITICAL
+ *   3. Policy version mismatch → CRITICAL
+ *   4. Duplicate evidence → LOW (repairable)
+ *   5. Touches auth/credentials → HIGH
+ *   6. No signals set → LOW (no risk)
  */
-export const classifyRisk = (signals: RiskSignal): RiskClass => {
-  if (signals.ciFailure) return 'auto-eligible';
-  if (signals.unresolvedCritical) return 'human-required';
-  if (signals.policyMismatch) return 'human-required';
-  if (signals.duplicateEvidence) return 'auto-eligible';
-  if (signals.touchesAuth) return 'human-required';
-  return 'auto-eligible';
+export const classifyRisk = (signals: RiskSignal): RiskLevel => {
+  if (signals.ciFailure) return 'LOW';
+  if (signals.unresolvedCritical) return 'CRITICAL';
+  if (signals.policyMismatch) return 'CRITICAL';
+  if (signals.duplicateEvidence) return 'LOW';
+  if (signals.touchesAuth) return 'HIGH';
+  return 'LOW';
 };
 
 /**
- * Map known {@link PolicyReasonCode}s to a {@link RiskSignal} and classify.
- *
- * Reason codes that do not map to a specific signal (e.g. EVIDENCE_INVALID,
- * EVIDENCE_STALE, HEAD_SHA_MISMATCH) are treated as empty signals, which
- * yields `'auto-eligible'`.
+ * Map known {@link PolicyReasonCode}s to a canonical {@link RiskLevel}.
  */
-export const classifyFromPolicyResult = (
-  result: PolicyResult,
-): RiskClass => {
-  const signal = reasonCodeToSignal(result.reasonCode);
-  return classifyRisk(signal);
+export const classifyFromPolicyResult = (result: PolicyResult): RiskLevel => {
+  return reasonCodeToRiskLevel(result.reasonCode);
 };
 
 /**
- * Map a single {@link PolicyReasonCode} to a {@link RiskSignal}.
- *
- * Only the corresponding signal field is set to `true` — all others default
- * to `false`. Reason codes not listed here produce an all-false signal.
+ * Compare two risk levels. Returns the higher one.
  */
-const reasonCodeToSignal = (
-  code: PolicyReasonCode,
-): RiskSignal => {
-  switch (code) {
-    case 'CI_NOT_GREEN':
-      return { ciFailure: true, unresolvedCritical: false, policyMismatch: false, duplicateEvidence: false, touchesAuth: false };
-    case 'UNRESOLVED_CRITICAL_FINDING':
-      return { ciFailure: false, unresolvedCritical: true, policyMismatch: false, duplicateEvidence: false, touchesAuth: false };
-    case 'POLICY_VERSION_MISMATCH':
-      return { ciFailure: false, unresolvedCritical: false, policyMismatch: true, duplicateEvidence: false, touchesAuth: false };
-    case 'DUPLICATE_EVIDENCE':
-      return { ciFailure: false, unresolvedCritical: false, policyMismatch: false, duplicateEvidence: true, touchesAuth: false };
-    default:
-      return { ciFailure: false, unresolvedCritical: false, policyMismatch: false, duplicateEvidence: false, touchesAuth: false };
-  }
+export const maxRisk = (a: RiskLevel, b: RiskLevel): RiskLevel => {
+  return RISK_ORDER[a] >= RISK_ORDER[b] ? a : b;
 };

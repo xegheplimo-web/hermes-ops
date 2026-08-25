@@ -1,10 +1,16 @@
 /**
  * Human Approval Gate — explicit sign-off before CRITICAL-risk actions proceed.
  *
- * The gate is stateful by design: a pending request stays pending until a valid
- * {@link HumanApprovalToken} is supplied via {@link resolveHumanApproval}.
- * In the CLI, the token is passed as a `--approval` JSON string.
+ * The token is a durable, auditable artifact. In phase 0 the signature is not
+ * verified cryptographically; the token is validated structurally and must be
+ * recorded in the Ops DB before it can be accepted by the control plane.
  */
+
+const RISK_LEVELS = ['LOW', 'MEDIUM', 'HIGH', 'CRITICAL'] as const;
+const normalizeRiskLevel = (risk: string): string => {
+  const upper = risk.trim().toUpperCase();
+  return RISK_LEVELS.includes(upper as typeof RISK_LEVELS[number]) ? upper : 'MEDIUM';
+};
 
 /** Current status of a human approval request. */
 export type HumanApprovalStatus = 'approved' | 'pending' | 'rejected';
@@ -75,11 +81,11 @@ export const resolveHumanApproval = (
 /**
  * Determine whether a human approval gate is required for the given risk level.
  *
- * Phase 0 rule: only `'critical'` requires human approval. LOW / MED bypass
- * entirely. This is a pure function — no side effects, no state.
+ * Canonical rule: only CRITICAL requires human approval. LOW / MEDIUM / HIGH
+ * bypass entirely. This is a pure function — no side effects, no state.
  */
 export const isHumanApprovalRequired = (risk: string): boolean => {
-  return risk === 'critical';
+  return normalizeRiskLevel(risk) === 'CRITICAL';
 };
 
 /** Clear all stored approval state (for test teardown). */

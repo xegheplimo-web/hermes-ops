@@ -1,11 +1,14 @@
 /**
- * Post-diff Risk Recalculation — escalates risk to 'human-required' when
- * changed file paths touch sensitive areas (auth, credentials, secrets, etc.).
+ * Post-diff Risk Recalculation — escalates risk when changed file paths touch
+ * sensitive areas (auth, credentials, secrets, etc.).
  *
  * Pure function: no side effects, deterministic.
+ *
+ * Aligned with Python final_risk.py: any changed path that matches a sensitive
+ * pattern escalates the final risk toward CRITICAL.
  */
 
-import type { RiskClass } from './classifier.js';
+import { type RiskLevel, RISK_ORDER } from '@hermes-ops/contracts';
 
 /**
  * Regular expressions that match file paths touching sensitive areas.
@@ -36,28 +39,31 @@ export const SENSITIVE_PATTERNS: ReadonlyArray<RegExp> = [
  *
  * Pure function — no side effects.
  */
-const matchesSensitivePath = (changedPaths: string[]): boolean =>
+export const matchesSensitivePath = (changedPaths: string[]): boolean =>
   changedPaths.some((p) =>
     SENSITIVE_PATTERNS.some((pattern) => pattern.test(p)),
   );
 
 /**
- * Recalculate risk class based on the actual content of a diff.
+ * Recalculate risk based on the actual content of a diff.
  *
- * When any changed file path touches a sensitive area (auth, credentials,
- * secrets, etc.) the risk is escalated to 'human-required'. Otherwise the
- * original class is returned unchanged.
- *
- * @param changedPaths — list of file paths changed in the diff (may be empty)
- * @param originalClass — the risk class determined before diff inspection
- * @returns escalated class if sensitive paths are found, originalClass otherwise
+ * When any changed file path touches a sensitive area, the risk is escalated
+ * to CRITICAL. Otherwise the original risk is returned unchanged.
  */
 export const recalculatePostDiffRisk = (
   changedPaths: string[],
-  originalClass: RiskClass,
-): RiskClass => {
+  originalRisk: RiskLevel,
+): RiskLevel => {
   if (matchesSensitivePath(changedPaths)) {
-    return 'human-required';
+    return 'CRITICAL';
   }
-  return originalClass;
+  return originalRisk;
+};
+
+/**
+ * Clamp a candidate risk escalation to a cap so we never exceed the highest
+ * meaningful level.
+ */
+export const escalateRisk = (current: RiskLevel, target: RiskLevel): RiskLevel => {
+  return RISK_ORDER[current] >= RISK_ORDER[target] ? current : target;
 };

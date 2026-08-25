@@ -20,6 +20,7 @@
     "lint": "tsc -b --pretty false"
   },
   "dependencies": {
-    "@hermes-ops/policy": "workspace:*"
+    "@hermes-ops/policy": "workspace:*",
+    "@hermes-ops/contracts": "workspace:*"
   }
 }
