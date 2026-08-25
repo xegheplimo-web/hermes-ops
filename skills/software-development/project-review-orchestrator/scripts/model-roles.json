@@ -1,0 +1,96 @@
+{
+  "version": "1.0.0",
+  "fallback_policy": {
+    "max_attempts_per_model": 2,
+    "on_provider_error": "try_next",
+    "on_budget_exceeded": "escalate"
+  },
+  "stages": {
+    "orchestrator": {
+      "executor": "hermes",
+      "primary_model": "claude-3-5-sonnet",
+      "fallback_chain": ["o3", "o1", "local-llm"],
+      "provider": "hermes",
+      "notes": "Analysis, reconcile, policy gate, risk — deep reasoning, multi-step planning."
+    },
+    "task_classifier": {
+      "executor": "rule-based",
+      "primary_model": "rule-based",
+      "fallback_chain": ["gpt-4o-mini", "claude-haiku"],
+      "provider": "classifier",
+      "notes": "Routine classification; deterministic rules first, small model fallback."
+    },
+    "strategy_router": {
+      "executor": "rule-based",
+      "primary_model": "rule-based",
+      "fallback_chain": ["glm-5-2"],
+      "provider": "rule",
+      "notes": "90% rule-based deterministic; Hermes fallback for ambiguous edge cases."
+    },
+    "trivial_task": {
+      "executor": "devin",
+      "primary_model": "glm-5-2",
+      "fallback_chain": ["local-llm"],
+      "provider": "devin",
+      "notes": "Simple fix, low cost."
+    },
+    "normal_task": {
+      "executor": "devin",
+      "primary_model": "claude-3-5-sonnet",
+      "fallback_chain": ["glm-5-2", "swe-1-7"],
+      "provider": "devin",
+      "notes": "Balanced quality/speed; if Claude unavailable fall back to glm-5-2."
+    },
+    "high_critical_task": {
+      "executor": "devin",
+      "primary_model": "swe-1-7",
+      "fallback_chain": ["o3", "claude-3-5-sonnet", "glm-5-2"],
+      "provider": "devin",
+      "notes": "Complex architecture / CRITICAL work; max reasoning."
+    },
+    "spec_review": {
+      "executor": "codex",
+      "primary_model": "gpt-5.6-sol",
+      "fallback_chain": ["gpt-4o", "claude-3-5-sonnet"],
+      "provider": "codex",
+      "notes": "Spec validation, adversarial review. Read-only."
+    },
+    "openai_spec_review": {
+      "executor": "openai",
+      "primary_model": "gpt-5.6-luna",
+      "fallback_chain": ["gpt-4o", "o3-mini", "o1"],
+      "provider": "openai",
+      "notes": "OpenAI API fallback for spec/external review."
+    },
+    "pr_review": {
+      "executor": "coderabbit",
+      "primary_model": "gpt-4o-mini",
+      "fallback_chain": ["claude-haiku"],
+      "provider": "coderabbit",
+      "notes": "Routine, high-volume, cheap PR review."
+    },
+    "agentmemory_update": {
+      "executor": "hermes",
+      "primary_model": "claude-3-5-sonnet",
+      "fallback_chain": ["o3"],
+      "provider": "hermes",
+      "notes": "Selective save, dedup, governance — not a ground-truth source."
+    }
+  },
+  "risk_to_stage": {
+    "LOW": "trivial_task",
+    "MEDIUM": "normal_task",
+    "HIGH": "high_critical_task",
+    "CRITICAL": "high_critical_task"
+  },
+  "provider_valid_models": {
+    "devin": ["glm-5-2", "swe-1-7", "local-llm"],
+    "codex": ["gpt-5.6-sol", "gpt-5.6", "gpt-4o", "o3-mini", "o1"],
+    "openai": ["gpt-5.6-luna", "gpt-4o", "gpt-4o-mini", "o3-mini", "o1"],
+    "rule": ["rule-based", "glm-5-2"],
+    "classifier": ["rule-based", "gpt-4o-mini", "claude-haiku"],
+    "anthropic": ["claude-3-5-sonnet", "claude-haiku", "claude-3-opus"],
+    "coderabbit": ["gpt-4o-mini", "claude-haiku"],
+    "hermes": ["claude-3-5-sonnet", "o3", "o1", "local-llm"]
+  }
+}

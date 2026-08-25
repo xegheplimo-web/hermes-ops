@@ -21,6 +21,12 @@ from pathlib import Path
 from typing import Any
 
 try:
+    from trace_context import add_trace_argument, get_trace_id
+    _HAS_TRACE = True
+except ImportError:
+    _HAS_TRACE = False
+
+try:
     from ops_adapter import (
         AuditEvent, OpsDbAdapter,
         STATUS_DISPATCHED, STATUS_COMPLETED, STATUS_FAILED, STATUS_RUNNING,
@@ -30,8 +36,21 @@ try:
 except ImportError:
     _HAS_OPS = False
 
+try:
+    from model_resolver import resolve_for_task
+    _HAS_RESOLVER = True
+except ImportError:
+    _HAS_RESOLVER = False
 
-RISK_MODEL_MAP: dict[str, str] = {
+try:
+    from circuit_breaker import CircuitBreaker, CircuitOpenError, estimate_cost
+    _HAS_BREAKER = True
+except ImportError:
+    _HAS_BREAKER = False
+
+
+# Legacy risk→model map kept as a failsafe when the resolver is unavailable.
+_RISK_MODEL_MAP: dict[str, str] = {
     "low": "glm-5-2",
     "medium": "glm-5-2",
     "high": "swe-1-7",
@@ -39,10 +58,16 @@ RISK_MODEL_MAP: dict[str, str] = {
 }
 
 
-def _model(risk: str, override: str | None) -> str:
+def _model(risk: str, override: str | None, task_type: str | None = None, task: dict | None = None) -> str:
+    """Resolve the Devin model for a task, with config-driven fallback chain."""
     if override:
         return override
-    return RISK_MODEL_MAP.get(risk.lower(), "glm-5-2")
+    if task and task.get("model"):
+        return str(task["model"])
+    if _HAS_RESOLVER:
+        assignment = resolve_for_task(risk, task_type)
+        return assignment.primary
+    return _RISK_MODEL_MAP.get(risk.lower(), "glm-5-2")
 
 
 def _find_devin_binary(devin_binary: str, allow_fallback: bool = True) -> str | None:
@@ -205,7 +230,12 @@ def main() -> int:
     parser.add_argument("--model", help="Override model for all tasks")
     parser.add_argument("--ops-db", action="store_true", help="Use Ops DB as source")
     parser.add_argument("--review-run-id", help="Review run ID for Ops DB lookup")
+    parser.add_argument("--reset-breaker", action="store_true",
+                        help="Reset the run-level circuit breaker before dispatching")
+    if _HAS_TRACE:
+        add_trace_argument(parser)
     args = parser.parse_args()
+    trace_id = get_trace_id(args) if _HAS_TRACE else os.environ.get("HERMES_TRACE_ID", "")
 
     try:
         # ── Authoritative path: Ops DB ──────────────────────────────────
@@ -232,6 +262,7 @@ def main() -> int:
                     for t in tasks:
                         dp = t.dag_payload or {}
                         risk = dp.get("early_risk") or dp.get("risk", "medium")
+                        task_type = dp.get("task_type")
                         preview.append({
                             "task_id": dp.get("task_id", t.external_id),
                             "ops_db_id": t.id,
@@ -239,12 +270,12 @@ def main() -> int:
                             "claimable": t.status in ("pending", "queued") and t.attempts < t.max_attempts,
                             "attempts": t.attempts,
                             "max_attempts": t.max_attempts,
-                            "task_type": dp.get("task_type"),
+                            "task_type": task_type,
                             "early_risk": risk,
                             "strategy": dp.get("strategy", []),
                             "required_gates": dp.get("required_gates", []),
                             "spec_level": dp.get("spec_level"),
-                            "model": _model(risk, args.model),
+                            "model": _model(risk, args.model, task_type, task=dp),
                             "source": "ops_db",
                         })
                     print(json.dumps({
@@ -254,7 +285,22 @@ def main() -> int:
                     return 0
 
                 # Real execution: claim each task under a lease before dispatch.
+                # Run-level circuit breaker sits OUTSIDE the per-task attempt
+                # bound: it stops a systemic fault from burning every task's
+                # budget on the same failure.
+                breaker = None
+                if _HAS_BREAKER:
+                    breaker = CircuitBreaker(
+                        out_dir / "circuit-breaker.json",
+                        run_id=args.review_run_id,
+                        trace_id=trace_id,
+                        ops_db=db,
+                    )
+                    if args.reset_breaker:
+                        breaker.reset()
+
                 results: list[dict] = []
+                breaker_stop: dict | None = None
                 while True:
                     t = db.claim_task(worker_id, review_run_id=args.review_run_id)
                     if t is None:
@@ -262,8 +308,36 @@ def main() -> int:
 
                     dp = t.dag_payload or {}
                     risk = dp.get("early_risk") or dp.get("risk", "medium")
-                    model = _model(risk, args.model)
+                    task_type = dp.get("task_type")
+                    model = _model(risk, args.model, task_type, task=dp)
                     tid = dp.get("task_id", t.external_id)
+
+                    # Gate BEFORE launching so an over-budget or systemically
+                    # failing run spends nothing further. The claimed task is
+                    # returned to the queue rather than consumed.
+                    if breaker is not None:
+                        allowed, reason = breaker.allow(model)
+                        if not allowed:
+                            db.transition_task(
+                                t.id, STATUS_FAILED,
+                                error=f"circuit breaker: {reason}"[:500],
+                                worker_id=worker_id,
+                            )
+                            db.transition_task(t.id, STATUS_QUEUED, worker_id=worker_id)
+                            db.record_audit(AuditEvent(
+                                task_id=t.id, actor="hermes.circuit_breaker",
+                                action="dispatch_refused",
+                                detail={
+                                    "task_id": tid, "model": model,
+                                    "reason": reason, **breaker.report(),
+                                },
+                                trace_id=trace_id,
+                            ))
+                            breaker_stop = {
+                                "task_id": tid, "ops_db_id": t.id,
+                                "reason": reason, "breaker": breaker.report(),
+                            }
+                            break
 
                     task_dict = {
                         "task_id": tid,
@@ -295,6 +369,9 @@ def main() -> int:
 
                     # Transition strictly on the launch outcome.
                     if entry.get("dispatched"):
+                        if breaker is not None:
+                            breaker.record_success(model)
+                            entry["breaker"] = breaker.report()
                         db.transition_task(t.id, STATUS_DISPATCHED, worker_id=worker_id)
                         db.record_audit(AuditEvent(
                             task_id=t.id, actor="hermes",
@@ -304,11 +381,16 @@ def main() -> int:
                                 "strategy": dp.get("strategy", []),
                                 "required_gates": dp.get("required_gates", []),
                                 "lease_owner": worker_id,
+                                "est_cost_usd": estimate_cost(model) if _HAS_BREAKER else None,
                             },
+                            trace_id=trace_id,
                         ))
                         entry["ops_status"] = STATUS_DISPATCHED
                     else:
                         err = entry.get("error") or entry.get("devin_stderr") or "Devin launch failed"
+                        if breaker is not None:
+                            breaker.record_failure(model, err)
+                            entry["breaker"] = breaker.report()
                         db.transition_task(t.id, STATUS_FAILED, error=err[:500], worker_id=worker_id)
                         db.record_audit(AuditEvent(
                             task_id=t.id, actor="hermes",
@@ -318,7 +400,9 @@ def main() -> int:
                                 "error": err[:500], "attempts": t.attempts,
                                 "max_attempts": t.max_attempts,
                                 "exhausted": t.attempts >= t.max_attempts,
+                                "breaker": breaker.report() if breaker else None,
                             },
+                            trace_id=trace_id,
                         ))
                         entry["ops_status"] = STATUS_FAILED
 
@@ -326,21 +410,29 @@ def main() -> int:
 
                 dispatched_ok = [r for r in results if r.get("dispatched")]
                 failed = [r for r in results if not r.get("dispatched")]
+                state = "DISPATCHED" if dispatched_ok and not failed else (
+                    "PARTIALLY_DISPATCHED" if dispatched_ok else "DISPATCH_FAILED"
+                )
+                if breaker_stop:
+                    state = "CIRCUIT_OPEN"
                 log = {
-                    "ok": len(failed) == 0,
+                    "ok": len(failed) == 0 and breaker_stop is None,
+                    "trace_id": trace_id,
                     "tasks_claimed": len(results),
                     "tasks_dispatched": len(dispatched_ok),
                     "tasks_failed": len(failed),
-                    "state": "DISPATCHED" if dispatched_ok and not failed else (
-                        "PARTIALLY_DISPATCHED" if dispatched_ok else "DISPATCH_FAILED"
-                    ),
+                    "state": state,
                     "source": "ops_db",
                     "lease_owner": worker_id,
+                    "circuit_breaker": breaker.report() if breaker else None,
+                    "circuit_stop": breaker_stop,
                     "tasks": results,
                 }
                 log_path = out_dir / "devin-dispatch-log.json"
                 log_path.write_text(json.dumps(log, indent=2), encoding="utf-8")
                 print(json.dumps(log, indent=2))
+                if breaker_stop:
+                    return 4
                 return 0 if not failed else 1
 
         # ── Fallback: task-plan.json (DRY RUN ONLY) ─────────────────────
@@ -375,7 +467,8 @@ def main() -> int:
         results = []
         for t in tasks:
             risk = t.get("early_risk") or t.get("risk", "medium")
-            model = _model(risk, args.model)
+            task_type = t.get("task_type")
+            model = _model(risk, args.model, task_type, task=t)
             entry = _dispatch_one(t, out_dir, args.devin_binary, model, args.permission_mode, False)
             entry["risk"] = risk
             entry["task_type"] = t.get("task_type")
@@ -384,7 +477,7 @@ def main() -> int:
             entry["source"] = "task-plan.json"
             results.append(entry)
 
-        print(json.dumps({"ok": True, "task_count": len(results), "dry_run": True, "source": "task-plan.json", "tasks": results}, indent=2))
+        print(json.dumps({"ok": True, "trace_id": trace_id, "task_count": len(results), "dry_run": True, "source": "task-plan.json", "tasks": results}, indent=2))
         return 0
 
     except (OSError, json.JSONDecodeError, ValueError) as exc:

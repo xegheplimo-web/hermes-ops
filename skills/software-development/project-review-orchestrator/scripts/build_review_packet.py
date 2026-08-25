@@ -7,9 +7,16 @@ import argparse
 import datetime as dt
 import hashlib
 import json
+import os
 import re
 import sys
 from pathlib import Path
+
+try:
+    from trace_context import add_trace_argument, get_trace_id
+    _HAS_TRACE = True
+except ImportError:
+    _HAS_TRACE = False
 
 SECRET_PATTERNS = [
     # Private keys (PEM blocks)
@@ -78,7 +85,10 @@ def main() -> int:
     parser.add_argument("--out", required=True)
     parser.add_argument("--mode", default="openai-api", choices=["openai-api", "chatgpt-human"],
                         help="Review delivery mode (default: openai-api)")
+    if _HAS_TRACE:
+        add_trace_argument(parser)
     args = parser.parse_args()
+    trace_id = get_trace_id(args) if _HAS_TRACE else (os.environ.get("HERMES_TRACE_ID", ""))
     try:
         evidence = json.loads(Path(args.evidence).read_text(encoding="utf-8"))
         analysis_raw = Path(args.analysis).read_text(encoding="utf-8")
@@ -87,6 +97,7 @@ def main() -> int:
             "schema_version": "1.0",
             "purpose": "independent_project_review",
             "created_at": dt.datetime.now(dt.timezone.utc).replace(microsecond=0).isoformat(),
+            "trace_id": trace_id,
             "review_mode": args.mode,
             "repository_snapshot": evidence,
             "hermes_analysis": analysis,
@@ -101,7 +112,7 @@ def main() -> int:
         out_path = Path(args.out)
         out_path.parent.mkdir(parents=True, exist_ok=True)
         out_path.write_text(json.dumps(packet, indent=2, ensure_ascii=False), encoding="utf-8")
-        print(json.dumps({"ok": True, "packet": str(out_path), "sha256": packet["packet_sha256"], "redactions": redactions}, indent=2))
+        print(json.dumps({"ok": True, "packet": str(out_path), "sha256": packet["packet_sha256"], "trace_id": trace_id, "redactions": redactions}, indent=2))
         return 0
     except (OSError, json.JSONDecodeError) as exc:
         print(json.dumps({"ok": False, "error": str(exc)}, indent=2), file=sys.stderr)

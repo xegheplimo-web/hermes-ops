@@ -16,6 +16,12 @@ import sys
 from pathlib import Path
 from typing import Any
 
+try:
+    from trace_context import add_trace_argument, get_trace_id
+    _HAS_TRACE = True
+except ImportError:
+    _HAS_TRACE = False
+
 REQUIRED_SECTIONS = frozenset([
     "PROJECT SNAPSHOT",
     "CURRENT IMPLEMENTED ARCHITECTURE",
@@ -293,7 +299,10 @@ def main() -> int:
     parser.add_argument("--analysis", required=True, help="Path to hermes-analysis.md")
     parser.add_argument("--external", required=True, help="Path to external-review.json")
     parser.add_argument("--out", required=True, help="Output directory for reconciled files")
+    if _HAS_TRACE:
+        add_trace_argument(parser)
     args = parser.parse_args()
+    trace_id = get_trace_id(args) if _HAS_TRACE else os.environ.get("HERMES_TRACE_ID", "")
 
     try:
         analysis_path = Path(args.analysis)
@@ -330,6 +339,7 @@ def main() -> int:
         project = analysis_path.resolve().parent.parent.name if analysis_path else ""
         output = {
             "run_id": run_id,
+            "trace_id": trace_id or run_id,
             "project": project,
             "findings": reconciled,
         }
@@ -345,6 +355,7 @@ def main() -> int:
             "ok": True,
             "reconciled_count": len(reconciled),
             "dispositions": dispositions,
+            "trace_id": trace_id or run_id,
             "json": str(json_path.resolve()),
             "markdown": str(md_path.resolve()),
         }

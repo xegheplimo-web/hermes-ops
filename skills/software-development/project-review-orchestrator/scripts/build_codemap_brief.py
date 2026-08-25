@@ -10,11 +10,18 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
 import subprocess
 import sys
 from pathlib import Path
 from typing import Any
+
+try:
+    from trace_context import add_trace_argument, get_trace_id
+    _HAS_TRACE = True
+except ImportError:
+    _HAS_TRACE = False
 
 
 TEMPLATE_VARS = frozenset([
@@ -196,7 +203,10 @@ def main() -> int:
     parser.add_argument("--reconciled", required=True, help="Path to reconciled-review.json")
     parser.add_argument("--repo", required=True, help="Repository root path")
     parser.add_argument("--out", required=True, help="Output directory for codemap-brief.md")
+    if _HAS_TRACE:
+        add_trace_argument(parser)
     args = parser.parse_args()
+    trace_id = get_trace_id(args) if _HAS_TRACE else os.environ.get("HERMES_TRACE_ID", "")
 
     try:
         reconciled_path = Path(args.reconciled)
@@ -259,6 +269,7 @@ def main() -> int:
             "codemap_brief": str(md_path.resolve()),
             "commit": head_sha,
             "branch": branch,
+            "trace_id": trace_id,
         }
         print(json.dumps(result, indent=2))
         return 0

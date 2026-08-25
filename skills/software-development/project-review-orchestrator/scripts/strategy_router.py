@@ -19,6 +19,12 @@ import sys
 from pathlib import Path
 from typing import Any
 
+try:
+    from model_resolver import resolve, resolve_for_task
+    _HAS_RESOLVER = True
+except ImportError:
+    _HAS_RESOLVER = False
+
 # ── Task types ──────────────────────────────────────────────────────────────
 
 TASK_FEATURE = "FEATURE"
@@ -126,6 +132,18 @@ def get_route(task_type: str, risk: str | None = None) -> dict:
                 if "human" not in existing_gates:
                     result["required_gates"] = result["required_gates"] + ["human"]
                     result["risk_escalation"] = "Human approval required for CRITICAL risk"
+
+    # Resolve the model/role allocation for this task.
+    if _HAS_RESOLVER and risk:
+        try:
+            assignment = resolve_for_task(risk, task_type)
+            result["preferred_model"] = assignment.preferred
+            result["model"] = assignment.primary
+            result["model_stage"] = assignment.stage
+            result["model_fallbacks"] = list(assignment.fallbacks)
+            result["model_executor"] = assignment.executor
+        except Exception:
+            pass
 
     return result
 

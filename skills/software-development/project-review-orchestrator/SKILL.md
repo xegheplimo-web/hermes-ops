@@ -88,6 +88,15 @@ Reconcile findings:
 
 `terminal(command="python skills/software-development/project-review-orchestrator/scripts/reconcile_review.py --analysis .hermes/reviews/<RUN_ID>/hermes-analysis.md --external .hermes/reviews/<RUN_ID>/external-review.json --out .hermes/reviews/<RUN_ID>")`
 
+Label analysis claims FACT / INFERENCE / UNKNOWN (run right after the Hermes
+first-pass analysis, before the review packet is built):
+
+`terminal(command="python skills/software-development/project-review-orchestrator/scripts/claim_classifier.py --analysis .hermes/reviews/<RUN_ID>/hermes-analysis.md --evidence .hermes/reviews/<RUN_ID>/repo-evidence.json --out .hermes/reviews/<RUN_ID>/claims-labels.json --findings-out .hermes/reviews/<RUN_ID>/investigation-findings.json --fail-on-ungrounded")`
+
+Inspect / reset the run-level dispatch circuit breaker:
+
+`terminal(command="python skills/software-development/project-review-orchestrator/scripts/circuit_breaker.py --state-file .hermes/reviews/<RUN_ID>/circuit-breaker.json --action status")`
+
 Build Codemap brief:
 
 `terminal(command="python skills/software-development/project-review-orchestrator/scripts/build_codemap_brief.py --reconciled .hermes/reviews/<RUN_ID>/reconciled-review.json --repo . --out .hermes/reviews/<RUN_ID>")`
@@ -226,10 +235,28 @@ INFERENCE
 UNKNOWN
 UNVERIFIED
 
+Then run `claim_classifier.py` to label every claim mechanically. It resolves
+file paths against `repo-evidence.json`, so a filename that is not in the
+snapshot does NOT count as evidence — this is what stops a hallucinated path
+from laundering an inference into a fact.
+
+Downstream contract (enforced, not advisory):
+
+- FACT      may become an implementation task.
+- INFERENCE must be verified or downgraded before implementation.
+- UNKNOWN   becomes an INVESTIGATION task first; it never becomes an
+            implementation task. Use `--findings-out` to emit these directly
+            in the shape `decompose_tasks.py` consumes.
+
+`--fail-on-ungrounded` exits 3 when UNKNOWN claims exceed 25% or no FACT claim
+exists at all. An analysis that fails this check is not a basis for dispatch:
+go back and collect evidence rather than routing it to the Strategy Router.
+
 Completion criterion:
 
 - Hermes analysis exists;
 - all non-trivial claims have evidence references or are explicitly labeled inference;
+- `claims-labels.json` exists and `analysis_grounded` is true;
 - external review has not yet influenced this analysis.
 
 ### Build the sanitized review packet
@@ -440,9 +467,31 @@ Do not let the external reviewer directly modify the repository.
 
 Devin must work on a branch/worktree and produce a PR.
 
+Two independent bounds apply to dispatch, and they are not the same thing:
+
+1. **Per-task attempt bound** — enforced inside `claim_task` (`attempts <
+   max_attempts`). Stops one bad task from retrying forever.
+2. **Run-level circuit breaker** — `circuit_breaker.py`, wired into
+   `dispatch_to_devin.py`. Stops a *systemic* fault (Devin binary missing,
+   model unavailable, auth expired, repo unbuildable) from burning every
+   task's attempt budget on the identical failure.
+
+The breaker trips on any of three conditions: N consecutive failures, a
+failure rate above threshold after a minimum sample, or the cost budget being
+exhausted. Cost is checked **before** the launch, so an over-budget attempt is
+refused before tokens are spent — count-bounded alone is not enough. A refused
+task is returned to `queued`, never silently consumed. After a cooldown one
+HALF_OPEN probe is allowed; a probe failure re-opens with the cooldown doubled
+(capped).
+
+Exit code 4 from `dispatch_to_devin.py` means `state: CIRCUIT_OPEN`. Do not
+loop on it. Read `circuit-breaker.json`, fix the systemic cause, then re-run
+with `--reset-breaker`.
+
 Completion criterion:
 
 - dispatched tasks have Ops DB ownership/lease;
+- the run-level breaker is CLOSED or its trip reason is reported to the user;
 - implementation goes through the normal GitHub change-control path.
 
 ### Apply existing GitHub gates
@@ -528,6 +577,20 @@ Use the OpenAI API for autonomous external review.
 
 Repair attempts must remain bounded by the project's policy.
 
+A per-task attempt counter is NOT a sufficient bound. Three failing tasks at
+`max_attempts=5` on a premium model is 15 paid launches of the same systemic
+fault. Bound the run by cost as well as by count — that is what the run-level
+circuit breaker exists for. If you find yourself re-running dispatch after a
+`CIRCUIT_OPEN` without changing anything, the breaker is working and you are
+the loop.
+
+### Treating an unlabelled assertion as evidence
+
+An assertive claim with no resolvable evidence reference and no reasoning trail
+is UNKNOWN, not FACT. Building an implementation task on it means Devin
+implements a guess. Run `claim_classifier.py` and route UNKNOWN claims to
+investigation first.
+
 ## Verification
 
 A successful review run proves all of the following:
@@ -535,14 +598,19 @@ A successful review run proves all of the following:
 1. Evidence is tied to a real Git commit.
 2. Dirty state is explicit.
 3. Hermes analyzed before external review.
-4. External packet contains no known secrets.
-5. External review is a separate artifact.
-6. Every external finding is reconciled.
-7. Accepted findings have repository evidence.
-8. Codemap/architecture exploration uses the same project snapshot.
-9. Task DAG is acyclic.
-10. Every task has acceptance criteria and verification.
-11. Ops DB, not AgentMemory, owns execution state.
-12. Coding goes through DevinAdapter.
-13. Changes go through PR/CI/security/review/policy-gate.
-14. Only verified durable lessons are promoted to memory.
+4. Every non-trivial analysis claim carries a FACT / INFERENCE / UNKNOWN label
+   and `analysis_grounded` is true.
+5. UNKNOWN claims became investigation tasks, not implementation tasks.
+6. External packet contains no known secrets.
+7. External review is a separate artifact.
+8. Every external finding is reconciled.
+9. Accepted findings have repository evidence.
+10. Codemap/architecture exploration uses the same project snapshot.
+11. Task DAG is acyclic.
+12. Every task has acceptance criteria and verification.
+13. Ops DB, not AgentMemory, owns execution state.
+14. Coding goes through DevinAdapter.
+15. Dispatch is bounded per-task (attempts) AND per-run (circuit breaker:
+    consecutive failures, failure rate, cost budget).
+16. Changes go through PR/CI/security/review/policy-gate.
+17. Only verified durable lessons are promoted to memory.

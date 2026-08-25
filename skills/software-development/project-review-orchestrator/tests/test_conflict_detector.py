@@ -17,6 +17,7 @@ from conflict_detector import (
     CONFLICT_DONE_UNVERIFIED, CONFLICT_MEMORY_VS_REPO,
     CONFLICT_OPS_VS_GIT, CONFLICT_SHA_MISMATCH, CONFLICT_STALE_MEMORY,
     ALL_CONFLICT_TYPES, SEVERITY_ERROR, SEVERITY_WARNING,
+    SEVERITY_INFO, SEVERITY_CRITICAL, DEFAULT_SEVERITY, SEVERITY_WEIGHT,
     GitEvidence, detect_all, detect_memory_vs_repo, detect_sha_mismatch,
     detect_stale_memory,
 )
@@ -144,6 +145,32 @@ def test_git_evidence_smoke():
 def test_severity_classification():
     assert SEVERITY_ERROR == "error"
     assert SEVERITY_WARNING == "warning"
+    assert SEVERITY_INFO == "info"
+    assert SEVERITY_CRITICAL == "critical"
+
+
+def test_severity_weights():
+    assert SEVERITY_WEIGHT[SEVERITY_INFO] == 0
+    assert SEVERITY_WEIGHT[SEVERITY_WARNING] == 1
+    assert SEVERITY_WEIGHT[SEVERITY_ERROR] == 2
+    assert SEVERITY_WEIGHT[SEVERITY_CRITICAL] == 3
+
+
+def test_agentmemory_is_hint_only():
+    """Memory conflicts should be info severity, not error."""
+    assert DEFAULT_SEVERITY[CONFLICT_MEMORY_VS_REPO] == SEVERITY_INFO
+    assert DEFAULT_SEVERITY[CONFLICT_STALE_MEMORY] == SEVERITY_INFO
+
+
+def test_summary_includes_score():
+    memory = [
+        {"content": "Requires missing-dependency-12345", "source": "lesson"},
+    ]
+    result = detect_all(REPO, memory_entries=memory,
+                        check_types={CONFLICT_MEMORY_VS_REPO})
+    assert "severity_score" in result
+    assert "severity_threshold" in result
+    assert result["severity_score"] == 0  # info weight
 
 
 def test_summary_counts():

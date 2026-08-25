@@ -20,6 +20,12 @@ import sys
 from pathlib import Path
 from typing import Iterable
 
+try:
+    from trace_context import add_trace_argument, get_trace_id
+    _HAS_TRACE = True
+except ImportError:
+    _HAS_TRACE = False
+
 
 LANGUAGE_BY_SUFFIX = {
     ".py": "Python", ".pyi": "Python",
@@ -309,7 +315,10 @@ def main() -> int:
     parser.add_argument("--out", required=True)
     parser.add_argument("--run-id", default=None, help="Run identifier (auto-generated if omitted)")
     parser.add_argument("--review-mode", default="openai-api", help="Review mode identifier (default: openai-api)")
+    if _HAS_TRACE:
+        add_trace_argument(parser)
     args = parser.parse_args()
+    trace_id = get_trace_id(args) if _HAS_TRACE else ""
     try:
         repo = resolve_repo(Path(args.repo).resolve())
         out = Path(args.out).resolve()
@@ -321,14 +330,26 @@ def main() -> int:
             short_sha = run_git(repo, "rev-parse", "--short", "HEAD").strip()
             run_id = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%dT%H%M%SZ") + "-" + short_sha
         evidence["run_id"] = run_id
+        evidence["trace_id"] = trace_id or run_id
 
         json_path = out / "repo-evidence.json"
         md_path = out / "repo-evidence.md"
         state_path = out / "state.json"
         json_path.write_text(json.dumps(evidence, indent=2, ensure_ascii=False), encoding="utf-8")
         md_path.write_text(render_markdown(evidence), encoding="utf-8")
-        state_path.write_text(json.dumps({
-            "run_id": run_id,
+
+        # Preserve orchestrator-owned state keys (started_at, trace_id, etc.) if they exist.
+        base_state: dict = {}
+        if state_path.exists():
+            try:
+                base_state = json.loads(state_path.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                base_state = {}
+
+        state = {
+            **base_state,
+            "run_id": base_state.get("run_id", run_id),
+            "trace_id": base_state.get("trace_id") or trace_id or run_id,
             "created_at": evidence["generated_at"],
             "status": "EVIDENCE_COLLECTED",
             "project": evidence["repository"]["root_name"],
@@ -336,14 +357,18 @@ def main() -> int:
             "commit_sha": evidence["repository"]["commit_sha"],
             "dirty": evidence["repository"]["dirty"],
             "review_mode": args.review_mode,
-            "artifacts": {
-                "repo_evidence": "repo-evidence.json",
-                "repo_evidence_md": "repo-evidence.md",
-                "state": "state.json",
-            },
-        }, indent=2, ensure_ascii=False), encoding="utf-8")
+        }
+        artifacts = state.get("artifacts", {})
+        artifacts.update({
+            "repo_evidence": "repo-evidence.json",
+            "repo_evidence_md": "repo-evidence.md",
+            "state": "state.json",
+        })
+        state["artifacts"] = artifacts
+        state_path.write_text(json.dumps(state, indent=2, ensure_ascii=False), encoding="utf-8")
         print(json.dumps({"ok": True, "repo": str(repo), "commit": evidence["repository"]["commit_sha"],
                            "dirty": evidence["repository"]["dirty"], "run_id": run_id,
+                           "trace_id": trace_id or run_id,
                            "json": str(json_path), "markdown": str(md_path), "state": str(state_path)}, indent=2))
         return 0
     except (EvidenceError, OSError) as exc:

@@ -22,6 +22,12 @@ import sys
 import time
 from pathlib import Path
 
+try:
+    from model_resolver import resolve
+    _HAS_RESOLVER = True
+except ImportError:
+    _HAS_RESOLVER = False
+
 
 # ── Schema (mirrors openai_review.py) ───────────────────────────────────────
 
@@ -850,11 +856,23 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
         default=None,
         help="Path to custom review prompt template.",
     )
+    parser.add_argument(
+        "--trace-id",
+        default=os.environ.get("HERMES_TRACE_ID", ""),
+        help="Trace ID for end-to-end correlation.",
+    )
     return parser.parse_args(argv)
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
+
+    # Resolve model from config if not overridden on CLI.
+    if not args.model and _HAS_RESOLVER:
+        stage = "openai_spec_review" if args.adapter == "openai" else "spec_review"
+        assignment = resolve(stage)
+        args.model = assignment.primary
+
     out_dir = Path(args.out)
     out_dir.mkdir(parents=True, exist_ok=True)
 
@@ -1032,6 +1050,7 @@ def main(argv: list[str] | None = None) -> int:
         )
 
     # ── Write external-review.json (same schema as openai_review.py) ────
+    review["trace_id"] = args.trace_id
     review_path = out_dir / "external-review.json"
     review_path.write_text(
         json.dumps(review, indent=2, ensure_ascii=False),
@@ -1046,6 +1065,7 @@ def main(argv: list[str] | None = None) -> int:
         "raw": str(raw_output_path),
         "prompt": str(prompt_path),
         "findings": findings_count,
+        "trace_id": args.trace_id,
         "adapter": "codex",
         "codex_version": codex_ver,
         "mode": args.mode,

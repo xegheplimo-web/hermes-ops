@@ -16,6 +16,12 @@ import sys
 from pathlib import Path
 from typing import Any
 
+try:
+    from trace_context import add_trace_argument, get_trace_id
+    _HAS_TRACE = True
+except ImportError:
+    _HAS_TRACE = False
+
 # Ops DB integration
 try:
     from ops_adapter import OpsDbAdapter, OpsTask, AuditEvent, make_external_id, STATUS_QUEUED, STATUS_PLANNING, STATUS_BLOCKED
@@ -106,6 +112,11 @@ def _route_task(task_type: str, risk: str) -> dict:
             "spec_level": route.get("spec_level", "none"),
             "max_attempts": route.get("max_attempts", 3),
             "routed_by": "strategy-router",
+            "preferred_model": route.get("preferred_model"),
+            "model": route.get("model"),
+            "model_stage": route.get("model_stage"),
+            "model_fallbacks": route.get("model_fallbacks", []),
+            "model_executor": route.get("model_executor"),
         }
     return {
         "strategy": ["verification"],
@@ -113,6 +124,11 @@ def _route_task(task_type: str, risk: str) -> dict:
         "spec_level": "formal",
         "max_attempts": 3,
         "routed_by": "fallback-conservative",
+        "preferred_model": None,
+        "model": None,
+        "model_stage": None,
+        "model_fallbacks": [],
+        "model_executor": None,
     }
 
 
@@ -249,6 +265,11 @@ def build_dag(reconciled: dict, codemap: str | None = None) -> dict:
             "spec_level": route["spec_level"],
             "max_attempts": route["max_attempts"],
             "routed_by": route["routed_by"],
+            "preferred_model": route.get("preferred_model"),
+            "model": route.get("model"),
+            "model_stage": route.get("model_stage"),
+            "model_fallbacks": route.get("model_fallbacks", []),
+            "model_executor": route.get("model_executor"),
             "objective": (
                 f"Investigate and verify: {f.get('required_action') or f.get('claim', 'No details')}"
             ),
@@ -307,6 +328,11 @@ def build_dag(reconciled: dict, codemap: str | None = None) -> dict:
             "spec_level": route["spec_level"],
             "max_attempts": route["max_attempts"],
             "routed_by": route["routed_by"],
+            "preferred_model": route.get("preferred_model"),
+            "model": route.get("model"),
+            "model_stage": route.get("model_stage"),
+            "model_fallbacks": route.get("model_fallbacks", []),
+            "model_executor": route.get("model_executor"),
             "objective": (
                 f"Implement: {f.get('required_action') or f.get('recommendation', 'Address the finding')}"
             ),
@@ -508,7 +534,10 @@ def main() -> int:
         "--review-run-id", default=None,
         help="Review run ID for Ops DB linkage",
     )
+    if _HAS_TRACE:
+        add_trace_argument(parser)
     args = parser.parse_args()
+    trace_id = get_trace_id(args) if _HAS_TRACE else os.environ.get("HERMES_TRACE_ID", "")
 
     try:
         reconciled_path = Path(args.reconciled).resolve()
@@ -581,11 +610,18 @@ def main() -> int:
 
         # -- Output ------------------------------------------------------------------------
         state = "READY_TO_DISPATCH" if ops_ids else "PLAN_READY_NOT_DISPATCHED"
+        # Carry trace id through the task plan
+        dag.setdefault("meta", {})["trace_id"] = trace_id or args.review_run_id or meta.get("run_id", "")
+        plan_file.write_text(
+            json.dumps(dag, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+
         print(
             json.dumps(
                 {
                     "ok": True,
                     "state": state,
+                    "trace_id": trace_id or args.review_run_id or meta.get("run_id", ""),
                     "task_count": meta["task_count"],
                     "investigation_count": meta["investigation_count"],
                     "implementation_count": meta["implementation_count"],

@@ -8,5 +8,4 @@ dist
 __pycache__/
 devin/
 .hermes/open-design/*/
-.hermes/reviews/codex-smoke-*/
-.hermes/reviews/reality-check-*/
+.hermes/reviews/*/

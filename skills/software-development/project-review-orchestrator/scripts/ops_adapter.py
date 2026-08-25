@@ -60,6 +60,7 @@ class AuditEvent:
     actor: str = "hermes"
     action: str = ""
     detail: dict = field(default_factory=dict)
+    trace_id: str | None = None
 
 
 @dataclass
@@ -465,6 +466,11 @@ class OpsDbAdapter:
 
     def record_audit(self, event: AuditEvent) -> int | None:
         """Public audit method."""
+        # Ensure trace_id is carried in the audit detail for end-to-end correlation.
+        detail = dict(event.detail)
+        if "trace_id" not in detail:
+            detail["trace_id"] = event.trace_id or os.environ.get("HERMES_TRACE_ID", "")
+        event.detail = detail
         return self._record_audit(event)
 
     # ── Evidence ────────────────────────────────────────────────────────

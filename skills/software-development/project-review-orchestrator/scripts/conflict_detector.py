@@ -38,8 +38,27 @@ CONFLICT_DONE_UNVERIFIED = "DONE_UNVERIFIED"
 CONFLICT_STALE_MEMORY = "STALE_MEMORY"
 CONFLICT_SHA_MISMATCH = "SHA_MISMATCH"
 
+# Severity weights: lower is advisory. AgentMemory conflicts are info/warning only,
+# because AgentMemory is a hint, not ground truth.
+SEVERITY_INFO = "info"
 SEVERITY_WARNING = "warning"
 SEVERITY_ERROR = "error"
+SEVERITY_CRITICAL = "critical"
+
+DEFAULT_SEVERITY: dict[str, str] = {
+    CONFLICT_SHA_MISMATCH: SEVERITY_ERROR,
+    CONFLICT_DONE_UNVERIFIED: SEVERITY_ERROR,
+    CONFLICT_OPS_VS_GIT: SEVERITY_WARNING,
+    CONFLICT_MEMORY_VS_REPO: SEVERITY_INFO,
+    CONFLICT_STALE_MEMORY: SEVERITY_INFO,
+}
+
+SEVERITY_WEIGHT: dict[str, int] = {
+    SEVERITY_INFO: 0,
+    SEVERITY_WARNING: 1,
+    SEVERITY_ERROR: 2,
+    SEVERITY_CRITICAL: 3,
+}
 
 ALL_CONFLICT_TYPES = {
     CONFLICT_MEMORY_VS_REPO,
@@ -213,7 +232,8 @@ def detect_memory_vs_repo(memory_entries: list[dict], git: GitEvidence) -> list[
                 if dep not in "\n".join(git.tracked_files).lower():
                     conflicts.append({
                         "type": CONFLICT_MEMORY_VS_REPO,
-                        "severity": SEVERITY_WARNING,
+                        "severity": DEFAULT_SEVERITY[CONFLICT_MEMORY_VS_REPO],
+                        "severity_score": SEVERITY_WEIGHT[DEFAULT_SEVERITY[CONFLICT_MEMORY_VS_REPO]],
                         "source": f"AgentMemory:{source}",
                         "claim": entry.get("content", ""),
                         "evidence": f"Dependency/component '{dep}' not found in current repo",
@@ -221,7 +241,7 @@ def detect_memory_vs_repo(memory_entries: list[dict], git: GitEvidence) -> list[
                         "rationale": (
                             f"AgentMemory records '{entry.get('content', '')[:100]}...' "
                             f"but git HEAD ({git.sha[:10]}) does not contain '{dep}'. "
-                            f"This may indicate a stale memory."
+                            f"AgentMemory is a hint only; verify with Git/Ops DB before acting."
                         ),
                     })
     return conflicts
@@ -248,7 +268,8 @@ def detect_ops_vs_git(ops: OpsEvidence, git: GitEvidence) -> list[dict]:
             ):
                 conflicts.append({
                     "type": CONFLICT_OPS_VS_GIT,
-                    "severity": SEVERITY_WARNING,
+                    "severity": DEFAULT_SEVERITY[CONFLICT_OPS_VS_GIT],
+                    "severity_score": SEVERITY_WEIGHT[DEFAULT_SEVERITY[CONFLICT_OPS_VS_GIT]],
                     "source": f"task:{t['external_id']}",
                     "claim": f"Task completed but write_scope '{scope_path}' not in repo",
                     "evidence": f"Task {t['external_id']} status=completed, scope={scope_path}",
@@ -273,7 +294,8 @@ def detect_done_unverified(ops: OpsEvidence) -> list[dict]:
     for t in missing:
         conflicts.append({
             "type": CONFLICT_DONE_UNVERIFIED,
-            "severity": SEVERITY_ERROR,
+            "severity": DEFAULT_SEVERITY[CONFLICT_DONE_UNVERIFIED],
+            "severity_score": SEVERITY_WEIGHT[DEFAULT_SEVERITY[CONFLICT_DONE_UNVERIFIED]],
             "source": f"task:{t['external_id']}",
             "claim": f"Task {t['external_id']} COMPLETED without verification evidence",
             "evidence": f"Task id={t['id']}, status=completed, no evidence row found",
@@ -301,14 +323,16 @@ def detect_stale_memory(memory_entries: list[dict], git: GitEvidence) -> list[di
             if len(sha) >= 7 and not sha.startswith(git.sha[:10]):
                 conflicts.append({
                     "type": CONFLICT_STALE_MEMORY,
-                    "severity": SEVERITY_WARNING,
+                    "severity": DEFAULT_SEVERITY[CONFLICT_STALE_MEMORY],
+                    "severity_score": SEVERITY_WEIGHT[DEFAULT_SEVERITY[CONFLICT_STALE_MEMORY]],
                     "source": f"AgentMemory:{entry.get('source', 'unknown')}",
                     "claim": f"Memory references commit {sha}, not current HEAD {git.sha[:10]}",
                     "evidence": f"Memory SHA: {sha}, Current SHA: {git.sha[:10]}",
                     "current_sha": git.sha,
                     "rationale": (
                         f"AgentMemory entry references commit {sha} but current HEAD "
-                        f"is {git.sha[:10]}. Memory may be stale."
+                        f"is {git.sha[:10]}. Memory may be stale. Treat as a hint and "
+                        f"verify against Git/Ops DB."
                     ),
                 })
     return conflicts
@@ -322,7 +346,8 @@ def detect_sha_mismatch(review_sha: str | None, git: GitEvidence) -> list[dict]:
     if review_sha and review_sha != git.sha:
         conflicts.append({
             "type": CONFLICT_SHA_MISMATCH,
-            "severity": SEVERITY_WARNING,
+            "severity": DEFAULT_SEVERITY[CONFLICT_SHA_MISMATCH],
+            "severity_score": SEVERITY_WEIGHT[DEFAULT_SEVERITY[CONFLICT_SHA_MISMATCH]],
             "source": "review_run",
             "claim": f"Review SHA {review_sha[:10]} ≠ current HEAD {git.sha[:10]}",
             "evidence": f"Review: {review_sha[:10]}, Current: {git.sha[:10]}",
@@ -344,6 +369,7 @@ def detect_all(
     review_sha: str | None = None,
     memory_entries: list[dict] | None = None,
     check_types: set[str] | None = None,
+    severity_threshold: int | None = None,
 ) -> dict:
     """Run all configured conflict detectors and return structured result."""
     git = GitEvidence(repo_path)
@@ -353,6 +379,7 @@ def detect_all(
 
     all_conflicts: list[dict] = []
     checks = check_types or ALL_CONFLICT_TYPES
+    threshold = severity_threshold if severity_threshold is not None else SEVERITY_WEIGHT[SEVERITY_ERROR]
 
     try:
         if CONFLICT_MEMORY_VS_REPO in checks and memory:
@@ -374,13 +401,16 @@ def detect_all(
         if ops:
             ops.close()
 
+    total_score = sum(c.get("severity_score", 0) for c in all_conflicts)
     has_errors = any(c["severity"] == SEVERITY_ERROR for c in all_conflicts)
     status = "CONFLICTED" if all_conflicts else "CLEAR"
 
     return {
         "conflicts": all_conflicts,
         "status": status,
-        "requires_reconciliation": bool(has_errors),
+        "requires_reconciliation": total_score >= threshold,
+        "severity_threshold": threshold,
+        "severity_score": total_score,
         "summary": {
             "total": len(all_conflicts),
             "by_type": {
@@ -388,9 +418,10 @@ def detect_all(
                 for t in ALL_CONFLICT_TYPES
             },
             "by_severity": {
-                SEVERITY_ERROR: sum(1 for c in all_conflicts if c["severity"] == SEVERITY_ERROR),
-                SEVERITY_WARNING: sum(1 for c in all_conflicts if c["severity"] == SEVERITY_WARNING),
+                s: sum(1 for c in all_conflicts if c["severity"] == s)
+                for s in (SEVERITY_INFO, SEVERITY_WARNING, SEVERITY_ERROR, SEVERITY_CRITICAL)
             },
+            "by_score": total_score,
         },
         "meta": {
             "repo_sha": git.sha,
@@ -415,6 +446,8 @@ def main() -> int:
     parser.add_argument("--memory-file", help="JSON file with AgentMemory entries")
     parser.add_argument("--check", nargs="*", choices=sorted(ALL_CONFLICT_TYPES),
                         help="Specific conflict types to check (default: all)")
+    parser.add_argument("--severity-threshold", type=int, default=2,
+                        help="Weighted severity score that triggers reconciliation (default: 2=error)")
     parser.add_argument("--out", help="Output file path (default: stdout)")
     args = parser.parse_args()
 
@@ -434,6 +467,7 @@ def main() -> int:
             review_sha=args.review_sha,
             memory_entries=memory,
             check_types=check_types,
+            severity_threshold=args.severity_threshold,
         )
         output = json.dumps(result, indent=2, ensure_ascii=False)
 

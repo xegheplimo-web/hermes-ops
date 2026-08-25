@@ -31,6 +31,13 @@ from typing import Any
 SKILL_DIR = Path(__file__).resolve().parent.parent
 REVIEW_SKILL = SKILL_DIR.parent / "project-review-orchestrator"
 SCRIPTS = REVIEW_SKILL / "scripts"
+sys.path.insert(0, str(SCRIPTS))
+
+try:
+    from model_resolver import resolve
+    _HAS_RESOLVER = True
+except ImportError:
+    _HAS_RESOLVER = False
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Helpers
@@ -43,6 +50,9 @@ def _run_script(name: str, *args: str, env: dict | None = None, timeout: int = 1
     environment = os.environ.copy()
     if env:
         environment.update(env)
+    # Ensure trace context is propagated to every subprocess.
+    if "HERMES_TRACE_ID" not in environment:
+        environment["HERMES_TRACE_ID"] = os.environ.get("HERMES_TRACE_ID", "")
     proc = subprocess.run(
         cmd,
         capture_output=True,
@@ -66,22 +76,84 @@ def _read_json(path: Path) -> Any:
 
 def _load_state(out_dir: Path) -> dict:
     state_path = out_dir / "state.json"
+    default_trace = out_dir.name
     if state_path.exists():
-        return _read_json(state_path)
+        state = _read_json(state_path)
+        state.setdefault("trace_id", default_trace)
+        state.setdefault("stage_durations", {})
+        return state
     return {
         "run_id": out_dir.name,
+        "trace_id": default_trace,
         "status": "CREATED",
         "progress": 0,
         "repo": "",
         "commit_sha": "",
         "branch": "",
+        "stage_durations": {},
     }
+
+
+class RepairBudget:
+    """Cost-bounded repair loop controller.
+
+    Tracks wall-clock duration and attempt count.  Stops when any limit is
+    exceeded.  Token/$ cost is estimated from duration and model for now; real
+    telemetry can back-fill ``cost_usd`` and ``token_count`` later.
+    """
+
+    def __init__(
+        self,
+        max_attempts: int = 3,
+        max_duration_seconds: float = 1800.0,
+        max_cost_usd: float = 10.0,
+        start_time: float | None = None,
+    ):
+        self.max_attempts = max(1, max_attempts)
+        self.max_duration_seconds = max(0.0, max_duration_seconds)
+        self.max_cost_usd = max(0.0, max_cost_usd)
+        self.start_time = start_time if start_time is not None else time.monotonic()
+        self.attempts = 0
+        self.estimated_cost_usd = 0.0
+
+    def can_spend(self) -> bool:
+        """Return True if another repair attempt is within budget."""
+        elapsed = time.monotonic() - self.start_time
+        if self.attempts >= self.max_attempts:
+            return False
+        if self.max_duration_seconds > 0 and elapsed > self.max_duration_seconds:
+            return False
+        if self.max_cost_usd > 0 and self.estimated_cost_usd > self.max_cost_usd:
+            return False
+        return True
+
+    def record_spend(self, attempt_cost_usd: float = 0.5) -> None:
+        """Record that one repair attempt was consumed."""
+        self.attempts += 1
+        self.estimated_cost_usd += attempt_cost_usd
+
+    def summary(self) -> dict[str, Any]:
+        return {
+            "attempts": self.attempts,
+            "max_attempts": self.max_attempts,
+            "duration_seconds": round(time.monotonic() - self.start_time, 3),
+            "max_duration_seconds": self.max_duration_seconds,
+            "estimated_cost_usd": round(self.estimated_cost_usd, 4),
+            "max_cost_usd": self.max_cost_usd,
+        }
 
 
 def _save_state(out_dir: Path, status: str, progress: int, extra: dict | None = None) -> None:
     state = _load_state(out_dir)
     state["status"] = status
     state["progress"] = progress
+    state["trace_id"] = state.get("trace_id") or out_dir.name
+    state.setdefault("stage_durations", {})
+    start = state.get("started_at_monotonic")
+    if start:
+        state["stage_durations"][status] = round(time.monotonic() - start, 3)
+    else:
+        state["stage_durations"][status] = 0.0
     state["updated_at"] = dt.datetime.now(dt.timezone.utc).isoformat()
     if extra:
         state.update(extra)
@@ -219,8 +291,12 @@ def stage_strategy_and_classify(out_dir: Path) -> dict:
     return {"classified": classified}
 
 
-def stage_external_review(out_dir: Path, reviewer: str, model: str | None) -> Path:
-    """Run external review (mock, codex, or openai)."""
+def stage_external_review(out_dir: Path, reviewer: str, model: str | None, independent_review: bool = False) -> Path:
+    """Run external review (mock, codex, or openai).
+
+    For HIGH/CRITICAL findings, optionally trigger an independent adversarial
+    Codex review to satisfy the independent policy-gate check.
+    """
     packet = out_dir / "external-review-packet.json"
     review_path = out_dir / "external-review.json"
 
@@ -243,6 +319,44 @@ def stage_external_review(out_dir: Path, reviewer: str, model: str | None) -> Pa
 
     _save_state(out_dir, "EXTERNAL_REVIEW_RECEIVED", 50)
     _update_artifact(out_dir, "external_review", review_path)
+
+    # Independent adversarial review for HIGH/CRITICAL findings.
+    # Default to true for real reviewers; must be explicit for mock.
+    if reviewer != "mock" or independent_review:
+        review = _read_json(review_path)
+        findings = review.get("findings", [])
+        high_or_critical = any(
+            str(f.get("severity", "")).lower() in ("high", "critical")
+            for f in findings
+        )
+        if high_or_critical:
+            indep_dir = out_dir / "independent-review"
+            indep_dir.mkdir(parents=True, exist_ok=True)
+            if reviewer == "codex":
+                args = [
+                    "--packet", str(packet), "--out", str(indep_dir),
+                    "--mode", "adversarial", "--timeout", "300",
+                ]
+                if model:
+                    args.extend(["--model", model])
+                _run_script("codex_review.py", *args, timeout=600)
+            elif reviewer == "openai":
+                _run_script(
+                    "openai_review.py",
+                    "--packet", str(packet),
+                    "--out", str(indep_dir),
+                    "--mode", "openai-api",
+                )
+            else:
+                # mock path: treat the same review as the independent artifact
+                _write_json(indep_dir / "external-review.json", review)
+            # Normalize to a single independent-review.json file
+            src = indep_dir / "external-review.json"
+            dst = out_dir / "independent-review.json"
+            if src.is_file():
+                dst.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+                _update_artifact(out_dir, "independent_review", dst)
+
     return review_path
 
 
@@ -378,8 +492,29 @@ def stage_final_risk(out_dir: Path) -> dict:
 
 
 def stage_policy_gate(out_dir: Path) -> dict:
-    """STUB: run policy gate. Currently returns PASS for dry-run."""
+    """Run the independent policy gate.
+
+    HIGH/CRITICAL risk must have an independent adversarial review artifact.
+    Without it the gate fails closed (BLOCK) rather than letting Hermes
+    reconcile its own output.
+    """
     final_risk = _read_json(out_dir / "final-risk.json")
+    risk_level = (final_risk.get("final_risk", "") or "medium").upper()
+
+    # Independent check: HIGH/CRITICAL requires a separate adversarial review.
+    if risk_level in ("HIGH", "CRITICAL"):
+        indep_path = out_dir / "independent-review.json"
+        if not indep_path.is_file():
+            result = {
+                "decision": "BLOCK",
+                "reason": "HIGH/CRITICAL risk requires an independent Codex adversarial review (independent-review.json missing)",
+                "final_risk": final_risk,
+            }
+            _write_json(out_dir / "policy-gate.json", result)
+            _save_state(out_dir, "POLICY_BLOCK", 95, result)
+            _update_artifact(out_dir, "policy_gate", out_dir / "policy-gate.json")
+            return result
+
     # Try to invoke the real gate if the binary is available
     decision = "PASS"
     reason = "Dry-run: no real CI or human approval configured."
@@ -422,28 +557,56 @@ def stage_policy_gate(out_dir: Path) -> dict:
     return result
 
 
-def stage_repair(out_dir: Path, max_attempts: int) -> dict:
-    """STUB: bounded repair loop. If POLICY_REPAIR, re-dispatch until max attempts."""
+def stage_repair(out_dir: Path, budget: RepairBudget) -> dict:
+    """Cost-bounded repair loop. If POLICY_REPAIR, re-dispatch while within budget."""
     state = _load_state(out_dir)
     attempts = state.get("repair_attempts", 0)
-    if state.get("status") == "POLICY_REPAIR" and attempts < max_attempts:
+
+    if state.get("status") == "POLICY_REPAIR" and budget.can_spend():
+        budget.record_spend()
         attempts += 1
         _save_state(out_dir, "REPAIR_DISPATCHED", 90, {"repair_attempts": attempts})
-        # Real implementation would re-dispatch with new verification prompt.
-        result = {"repaired": True, "attempts": attempts, "note": "stub"}
+        # Real implementation would re-dispatch with a targeted verification prompt.
+        result: dict[str, Any] = {"repaired": True, "attempts": attempts, "budget": budget.summary(), "note": "stub"}
     else:
-        result = {"repaired": False, "attempts": attempts}
+        reason = "not in repair state" if state.get("status") != "POLICY_REPAIR" else "repair budget exhausted"
+        result = {
+            "repaired": False,
+            "attempts": attempts,
+            "budget": budget.summary(),
+            "reason": reason,
+            "escalate": state.get("status") == "POLICY_REPAIR",
+        }
+
     _write_json(out_dir / "repair-result.json", result)
     _update_artifact(out_dir, "repair_result", out_dir / "repair-result.json")
     return result
 
 
-def stage_outcome(out_dir: Path) -> dict:
-    """STUB: collect outcome metrics and lessons learned."""
+def stage_outcome(out_dir: Path, budget: RepairBudget | None = None) -> dict:
+    """Collect structured outcome metrics for the run."""
+    state = _load_state(out_dir)
+    start = state.get("started_at_monotonic", time.monotonic())
+    duration = round(time.monotonic() - start, 3)
+
+    plan = _read_json(out_dir / "task-plan.json") if (out_dir / "task-plan.json").exists() else {"tasks": []}
+    gate = _read_json(out_dir / "policy-gate.json") if (out_dir / "policy-gate.json").exists() else {}
+
     metrics = {
+        "schema_version": "1.0.0",
         "run_id": out_dir.name,
-        "stages_completed": _load_state(out_dir).get("status"),
-        "duration_seconds": 0,
+        "trace_id": state.get("trace_id", out_dir.name),
+        "final_status": state.get("status"),
+        "started_at": state.get("started_at"),
+        "completed_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "duration_seconds": duration,
+        "task_count": len(plan.get("tasks", [])),
+        "gate_decision": gate.get("decision"),
+        "gate_reason": gate.get("reason"),
+        "repair_attempts": state.get("repair_attempts", 0),
+        "repair_budget": budget.summary() if budget else None,
+        "stages_completed": list(state.get("stage_durations", {}).keys()),
+        "estimated_cost_usd": round(duration * 0.01, 4),
         "lessons": ["Open Design orchestrator reached policy gate."],
         "candidate_skill": None,
     }
@@ -465,6 +628,8 @@ def main() -> int:
     parser.add_argument("--reviewer", choices=["mock", "codex", "openai"], default="mock",
                         help="External reviewer (default: mock)")
     parser.add_argument("--reviewer-model", default=None, help="Override model for codex reviewer")
+    parser.add_argument("--independent-review", action="store_true", default=None,
+                        help="Run an independent adversarial review for HIGH/CRITICAL findings")
     parser.add_argument("--dispatch-mode", choices=["dry-run", "dispatch"], default="dry-run",
                         help="Devin dispatch mode (default: dry-run)")
     parser.add_argument("--ops-db", action="store_true", help="Write task DAG to Ops DB")
@@ -473,6 +638,10 @@ def main() -> int:
                         help="Stop after named stage (e.g., RECONCILED, TASKS_DECOMPOSED)")
     parser.add_argument("--max-repair-attempts", type=int, default=3,
                         help="Max Devin repair attempts (default: 3)")
+    parser.add_argument("--max-repair-duration", type=int, default=1800,
+                        help="Max repair wall-clock time in seconds (default: 1800)")
+    parser.add_argument("--max-repair-cost", type=float, default=10.0,
+                        help="Estimated max repair cost in USD (default: 10.0)")
     parser.add_argument("--skip-conflict-check", action="store_true",
                         help="Skip conflict detector (useful for fresh repos)")
     args = parser.parse_args()
@@ -481,8 +650,23 @@ def main() -> int:
     out_dir = Path(args.out).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
 
+    # Set the canonical trace id for this run.
+    run_id = out_dir.name
+    os.environ["HERMES_TRACE_ID"] = run_id
+    _load_state(out_dir)  # ensure state has trace_id
+
     # Initialize state
-    _save_state(out_dir, "PREFLIGHT", 0, {"repo": str(repo)})
+    _save_state(
+        out_dir,
+        "PREFLIGHT",
+        0,
+        {
+            "repo": str(repo),
+            "trace_id": run_id,
+            "started_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+            "started_at_monotonic": time.monotonic(),
+        },
+    )
 
     try:
         # 1. Evidence
@@ -512,7 +696,12 @@ def main() -> int:
         stage_strategy_and_classify(out_dir)
 
         # 6. External review
-        stage_external_review(out_dir, args.reviewer, args.reviewer_model)
+        reviewer_model = args.reviewer_model
+        if not reviewer_model and _HAS_RESOLVER:
+            stage = "openai_spec_review" if args.reviewer == "openai" else "spec_review"
+            reviewer_model = resolve(stage).primary
+        independent_review = args.independent_review if args.independent_review is not None else (args.reviewer != "mock")
+        stage_external_review(out_dir, args.reviewer, reviewer_model, independent_review)
         if args.stop_after == "EXTERNAL_REVIEW_RECEIVED":
             return 0
 
@@ -548,12 +737,20 @@ def main() -> int:
         # 14. Policy gate
         gate = stage_policy_gate(out_dir)
 
-        # 15. Repair loop (bounded)
-        if gate.get("decision") == "REPAIR":
-            stage_repair(out_dir, args.max_repair_attempts)
+        # 15. Repair loop (cost-bounded)
+        repair_budget = RepairBudget(
+            max_attempts=args.max_repair_attempts,
+            max_duration_seconds=args.max_repair_duration,
+            max_cost_usd=args.max_repair_cost,
+        )
+        while _load_state(out_dir).get("status") == "POLICY_REPAIR" and repair_budget.can_spend():
+            stage_repair(out_dir, repair_budget)
+            if _load_state(out_dir).get("status") != "POLICY_REPAIR":
+                break
+            gate = stage_policy_gate(out_dir)
 
         # 16. Outcome
-        stage_outcome(out_dir)
+        stage_outcome(out_dir, repair_budget)
 
         print(json.dumps({
             "ok": True,

@@ -9,6 +9,20 @@ import os
 import sys
 from pathlib import Path
 
+try:
+    from model_resolver import resolve
+    _HAS_RESOLVER = True
+except ImportError:
+    _HAS_RESOLVER = False
+
+
+def _default_model() -> str:
+    """Default OpenAI review model from config or environment."""
+    if _HAS_RESOLVER:
+        return resolve("openai_spec_review").primary
+    return os.getenv("OPENAI_REVIEW_MODEL", "gpt-5.6-luna")
+
+
 REVIEW_SCHEMA = {
     "type": "object",
     "additionalProperties": False,
@@ -121,7 +135,12 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--packet", required=True)
     parser.add_argument("--out", required=True)
-    parser.add_argument("--model", default=os.getenv("OPENAI_REVIEW_MODEL", "gpt-5.6-luna"))
+    parser.add_argument("--model", default=_default_model())
+    parser.add_argument(
+        "--trace-id",
+        default=os.environ.get("HERMES_TRACE_ID", ""),
+        help="Trace ID for end-to-end correlation.",
+    )
     parser.add_argument(
         "--mode",
         choices=["openai-api", "chatgpt-human"],
@@ -210,10 +229,11 @@ def main() -> int:
         print(json.dumps({"ok": False, "error": f"Response validation failed: {'; '.join(validation_errors)}"}), file=sys.stderr)
         return 1
 
+    review["trace_id"] = args.trace_id
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(review, indent=2, ensure_ascii=False), encoding="utf-8")
-    print(json.dumps({"ok": True, "review": str(out_path), "model": args.model, "findings": len(review.get("findings", []))}))
+    print(json.dumps({"ok": True, "review": str(out_path), "model": args.model, "trace_id": args.trace_id, "findings": len(review.get("findings", []))}))
     return 0
 
 
