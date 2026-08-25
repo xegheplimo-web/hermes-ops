@@ -94,10 +94,58 @@ def test_resolve_approval() -> None:
         run_id = f"approval-test-{int(datetime.now(timezone.utc).timestamp())}"
         task_id = _make_task(db, run_id, "resolve")
         approval = db.request_approval(task_id, "bob", "override", "sig-002")
-        resolved = db.resolve_approval(approval.id, "approved")
+        resolved = db.resolve_approval(
+            approval.id, "approved", approver="bob", signature="sig-002"
+        )
         assert resolved is not None
         assert resolved.status == "approved"
+        assert resolved.approver == "bob"
+        assert resolved.signature == "sig-002"
+        assert resolved.signed_at is not None
         assert db.is_approved(task_id) is True
+    finally:
+        db.close()
+
+
+@test("unsigned approval is refused (gate would reject it)")
+def test_unsigned_approval_refused() -> None:
+    db = _make_db()
+    try:
+        run_id = f"approval-test-{int(datetime.now(timezone.utc).timestamp())}"
+        task_id = _make_task(db, run_id, "unsigned")
+        approval = db.request_approval(task_id, reason="no signature yet")
+        raised = False
+        try:
+            db.resolve_approval(approval.id, "approved")
+        except ValueError:
+            raised = True
+        assert raised, "approving without approver/signature must raise"
+        assert db.is_approved(task_id) is False
+    finally:
+        db.close()
+
+
+@test("get_approval_token returns a gate-compatible token only when signed")
+def test_approval_token_bridge() -> None:
+    db = _make_db()
+    try:
+        run_id = f"approval-test-{int(datetime.now(timezone.utc).timestamp())}"
+        task_id = _make_task(db, run_id, "token")
+        assert db.get_approval_token(task_id) is None
+
+        approval = db.request_approval(task_id, reason="critical change")
+        assert db.get_approval_token(task_id) is None, "pending must not yield a token"
+
+        db.resolve_approval(
+            approval.id, "approved", approver="sep", signature="sig-token-1"
+        )
+        token = db.get_approval_token(task_id)
+        assert token is not None
+        # Shape must match HumanApprovalToken consumed by hermes-policy-gate.
+        for key in ("signedAt", "approver", "reason", "signature"):
+            assert key in token and token[key], f"token missing {key}"
+        assert token["approver"] == "sep"
+        assert token["signature"] == "sig-token-1"
     finally:
         db.close()
 
@@ -150,14 +198,23 @@ def main() -> int:
     print("  Ops DB Durable Approval Tests")
     print("=" * 60)
 
-    test_request_approval()
-    test_resolve_approval()
-    test_reject_approval()
-    test_get_approvals_for_task()
-    test_is_approved_pending()
+    # Auto-discover every test_* function in definition order so a newly
+    # added test can never be silently skipped by a hand-maintained list.
+    import inspect
+
+    module = sys.modules[__name__]
+    fns = [
+        (name, obj)
+        for name, obj in vars(module).items()
+        if name.startswith("test_") and callable(obj)
+    ]
+    fns.sort(key=lambda kv: getattr(kv[1], "__wrapped_lineno__", 0) or 0)
+    for _, fn in fns:
+        fn()
 
     print("=" * 60)
     print(f"  Results: {_TESTS_PASSED} passed, {_TESTS_FAILED} failed")
+    print(f"  Discovered: {len(fns)} test functions")
     print("=" * 60)
     return 1 if _TESTS_FAILED > 0 else 0
 

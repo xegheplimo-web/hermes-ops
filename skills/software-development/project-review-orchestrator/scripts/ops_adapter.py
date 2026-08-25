@@ -564,24 +564,73 @@ class OpsDbAdapter:
         self,
         approval_id: int,
         status: str,
+        approver: str = "",
+        signature: str = "",
     ) -> Approval | None:
-        """Resolve a pending approval to 'approved' or 'rejected'."""
+        """Resolve a pending approval to 'approved' or 'rejected'.
+
+        An 'approved' record MUST carry a non-empty approver and signature:
+        the 4-way policy gate treats a token missing either field as invalid,
+        so allowing a blank approval here would produce a row that reads as
+        approved in Ops DB but is rejected at the gate. Fail closed instead.
+        Also stamps signed_at and writes an audit event so the decision is
+        attributable after a restart.
+        """
         if status not in ("approved", "rejected"):
             raise ValueError(f"Invalid approval status: {status}")
+        if status == "approved" and not (approver and signature):
+            raise ValueError(
+                "approved requires a non-empty approver and signature "
+                "(the policy gate rejects unsigned approvals)"
+            )
         cur = self.conn.cursor()
         try:
             cur.execute("""
                 UPDATE approvals
-                SET status = %s
+                SET status = %s,
+                    approver = COALESCE(NULLIF(%s, ''), approver),
+                    signature = COALESCE(NULLIF(%s, ''), signature),
+                    signed_at = now()
                 WHERE id = %s
                 RETURNING id, task_id, signed_at, approver, reason, signature, status, created_at
-            """, (status, approval_id))
+            """, (status, approver, signature, approval_id))
             row = cur.fetchone()
             if not row:
                 return None
-            return self._row_to_approval(row, cur)
+            approval = self._row_to_approval(row, cur)
         finally:
             cur.close()
+
+        self.record_audit(AuditEvent(
+            task_id=approval.task_id,
+            actor=approver or "unknown",
+            action=f"approval_{status}",
+            detail={
+                "approval_id": approval.id,
+                "approver": approval.approver,
+                "reason": approval.reason,
+                "signed_at": approval.signed_at.isoformat() if approval.signed_at else None,
+            },
+        ))
+        return approval
+
+    def get_approval_token(self, task_id: int) -> dict | None:
+        """Return the newest approved record as a gate-compatible token.
+
+        Shape matches HumanApprovalToken expected by `hermes-policy-gate`
+        (`--approval`): {signedAt, approver, reason, signature}. Returns None
+        when there is no valid approved record, so the caller passes nothing
+        and the gate blocks on CRITICAL.
+        """
+        for a in self.get_approvals_for_task(task_id):
+            if a.status == "approved" and a.approver and a.signature:
+                return {
+                    "signedAt": a.signed_at.isoformat() if a.signed_at else "",
+                    "approver": a.approver,
+                    "reason": a.reason,
+                    "signature": a.signature,
+                }
+        return None
 
     def get_approvals_for_task(self, task_id: int) -> list[Approval]:
         """Get all approval records for a task, newest first."""
@@ -598,13 +647,22 @@ class OpsDbAdapter:
             cur.close()
 
     def is_approved(self, task_id: int) -> bool:
-        """Return True if the task has at least one 'approved' record."""
+        """Return True only for an approved record the policy gate will accept.
+
+        Mirrors the gate's token validity rule (approver + signature +
+        signed_at all present). A row marked 'approved' but unsigned is NOT
+        an approval, so this never reports approved where the gate blocks.
+        """
         cur = self.conn.cursor()
         try:
             cur.execute("""
                 SELECT EXISTS (
                     SELECT 1 FROM approvals
-                    WHERE task_id = %s AND status = 'approved'
+                    WHERE task_id = %s
+                      AND status = 'approved'
+                      AND approver <> ''
+                      AND signature <> ''
+                      AND signed_at IS NOT NULL
                 )
             """, (task_id,))
             return bool(cur.fetchone()[0])

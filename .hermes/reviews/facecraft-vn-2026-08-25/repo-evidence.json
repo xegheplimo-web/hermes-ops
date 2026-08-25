@@ -1,0 +1,454 @@
+{
+  "schema_version": "1.0",
+  "generated_at": "2026-08-25T00:11:26+00:00",
+  "repository": {
+    "root_name": "FaceCraft-VN",
+    "branch": "feature/smart-edit",
+    "commit_sha": "2cb7964bb5e46978f93c205d82bdeec71b23bab6",
+    "dirty": true,
+    "changed_entry_count": 3,
+    "changed_entries": [
+      " M engines/qwen-edit/edit_worker.py",
+      " M tests/test_smart_edit_worker.py",
+      "?? .hermes/reviews/run_20260823_01/prompts/T01-fix-quantization.md"
+    ]
+  },
+  "files": {
+    "tracked_count": 175,
+    "safe_scanned_count": 175,
+    "tracked_bytes_safe": 1718339,
+    "languages_by_file": {
+      "Python": 89,
+      "Markdown": 70,
+      "Other": 13,
+      "YAML": 2,
+      "JSON": 1
+    },
+    "languages_by_bytes": {
+      "Markdown": 799121,
+      "Python": 562712,
+      "Other": 345042,
+      "YAML": 7632,
+      "JSON": 3832
+    }
+  },
+  "project_structure": {
+    "manifests": [
+      "requirements.txt"
+    ],
+    "test_file_count": 34,
+    "test_files_sample": [
+      "tests/test_ai_edit_tab.py",
+      "tests/test_app_launch.py",
+      "tests/test_cuda_contract.py",
+      "tests/test_edit_plan.py",
+      "tests/test_engine_pin.py",
+      "tests/test_facefusion_service.py",
+      "tests/test_florence_ground.py",
+      "tests/test_gpu_lease.py",
+      "tests/test_gpu_resource_manager.py",
+      "tests/test_input_validator.py",
+      "tests/test_input_validator_ext.py",
+      "tests/test_job_store.py",
+      "tests/test_lama_inpaint.py",
+      "tests/test_main_ui.py",
+      "tests/test_mask_utils.py",
+      "tests/test_model_manifest.py",
+      "tests/test_offline_env.py",
+      "tests/test_qwen_edit_gpu.py",
+      "tests/test_qwen_edit_main_ui.py",
+      "tests/test_qwen_edit_service.py",
+      "tests/test_qwen_edit_worker.py",
+      "tests/test_qwen_translator.py",
+      "tests/test_sam2_mask.py",
+      "tests/test_sdxl_inpaint.py",
+      "tests/test_service.py",
+      "tests/test_smart_edit_composition.py",
+      "tests/test_smart_edit_manifest.py",
+      "tests/test_smart_edit_planner.py",
+      "tests/test_smart_edit_router.py",
+      "tests/test_smart_edit_service.py",
+      "tests/test_smart_edit_targeting.py",
+      "tests/test_smart_edit_worker.py",
+      "tests/test_tier_a_worker.py",
+      "tests/test_video_service.py"
+    ],
+    "ci_files": [
+      ".github/workflows/ci.yml"
+    ],
+    "security_sensitive_paths_sample": [
+      "docs/smart-edit-security.md"
+    ]
+  },
+  "maintenance": {
+    "todo_markers": {
+      "FIXME": 2,
+      "TODO": 48
+    },
+    "recent_commits": [
+      {
+        "sha": "2cb7964bb5e46978f93c205d82bdeec71b23bab6",
+        "date": "2026-08-23T06:12:08+07:00",
+        "author": "Hermes",
+        "subject": "feat(TASK-006): Qwen NF4 4-bit quantization for VRAM reduction"
+      },
+      {
+        "sha": "a6cf88b9a0745d2d59b5270b860cab6110f0d24e",
+        "date": "2026-08-23T05:54:33+07:00",
+        "author": "Hermes",
+        "subject": "docs: add AGENTS.md (pitfalls/commands) + design analysis reports (Aug 20)"
+      },
+      {
+        "sha": "86b7deb89ec5dd7917a915f4f47a83c7fbf43774",
+        "date": "2026-08-23T05:54:28+07:00",
+        "author": "Hermes",
+        "subject": "chore: add bin/ to .gitignore (ffmpeg external binaries)"
+      },
+      {
+        "sha": "c75cf8110d02ea87722d8059a24b60ffba00f81a",
+        "date": "2026-08-23T05:53:51+07:00",
+        "author": "Hermes",
+        "subject": "feat(TASK-005): multi-face UI + model upgrade (Qwen3, hyperswap, gfpgan)"
+      },
+      {
+        "sha": "e3d910a965a8c52030cbf416d3310d52640a1110",
+        "date": "2026-08-20T05:15:39+07:00",
+        "author": "Hermes",
+        "subject": "fix(smart-edit): fix Gradio progress param, rounding, add mask_utils tests"
+      },
+      {
+        "sha": "fdc83137f992ccbdeb97c2531b4b2fc8724eaddc",
+        "date": "2026-08-20T03:09:30+07:00",
+        "author": "Hermes",
+        "subject": "TASK D: add tests for qwen_translator.py"
+      },
+      {
+        "sha": "870b1de75a80fcad457817e74f5e8d8334efb700",
+        "date": "2026-08-20T02:39:13+07:00",
+        "author": "Hermes",
+        "subject": "docs: add project reports, critique, work assignment, and FaceFusion tests"
+      },
+      {
+        "sha": "46a486fd997eefca845a7607e38af7b26a8d5afb",
+        "date": "2026-08-20T02:38:20+07:00",
+        "author": "Hermes",
+        "subject": "test: add comprehensive test suite for smart edit pipeline"
+      },
+      {
+        "sha": "c487dcf25c06d90d2b10044b451dc5dfef106179",
+        "date": "2026-08-20T02:37:35+07:00",
+        "author": "Hermes",
+        "subject": "feat: add AI edit tab, mask utilities, strict composer, and CI workflow"
+      },
+      {
+        "sha": "98ee909205a34c117b0b877a17cc9ceed9863e3c",
+        "date": "2026-08-20T02:37:25+07:00",
+        "author": "Hermes",
+        "subject": "feat(qwen-edit): update manifest data handling"
+      },
+      {
+        "sha": "1ceeb75449198972b88c58609282f6ba03596a24",
+        "date": "2026-08-20T02:37:17+07:00",
+        "author": "Hermes",
+        "subject": "feat(services): update FaceFusion service, engine pinning, input validation, and UI"
+      },
+      {
+        "sha": "bb29eddf1d761cca6037523c3d3664cee5132c32",
+        "date": "2026-08-20T02:37:08+07:00",
+        "author": "Hermes",
+        "subject": "feat(smart-edit): add EditPlan model, chain routing, and worker enhancements"
+      },
+      {
+        "sha": "3dbf4e58c2a62c5eabf5e8b7ae5d34e6ef728fc4",
+        "date": "2026-08-20T02:36:44+07:00",
+        "author": "Hermes",
+        "subject": "chore: add pytest result files to .gitignore"
+      },
+      {
+        "sha": "6fe264008c0435f45a9b6586781c830d340bf94b",
+        "date": "2026-08-20T02:36:22+07:00",
+        "author": "Hermes",
+        "subject": "chore: add task artifacts and tool outputs to .gitignore"
+      },
+      {
+        "sha": "e91901530718f2acd3e8ee40a98223321622ba58",
+        "date": "2026-08-18T07:06:20+07:00",
+        "author": "Hermes",
+        "subject": "TASK-015: compile EXPECTED_DIGESTS for Qwen-Edit models (36 files)"
+      },
+      {
+        "sha": "0b42bba7822aa227e3c8013cd8a28477e0136ab3",
+        "date": "2026-08-18T07:01:48+07:00",
+        "author": "Hermes",
+        "subject": "TASK-015 repair r1: Codex review fixes"
+      },
+      {
+        "sha": "a2a3603ca77dad9236d061a53b30cbf3dfa9e8b0",
+        "date": "2026-08-18T06:27:46+07:00",
+        "author": "Hermes",
+        "subject": "TASK-015: pin qwen requirements to diffusers 0.39.0"
+      },
+      {
+        "sha": "813083fc2f4a2a00d3110b25d2633e0f3769f7d4",
+        "date": "2026-08-18T06:22:52+07:00",
+        "author": "Hermes",
+        "subject": "TASK-015: Qwen Prompt Editing tab + worker + GPU cross-process lease"
+      },
+      {
+        "sha": "b277cd07d32cbb20b49f45fb5d975ce68f6e8e0f",
+        "date": "2026-08-18T05:54:15+07:00",
+        "author": "Hermes",
+        "subject": "TASK-013 repair + fix sam2_mask numpy truth-value"
+      },
+      {
+        "sha": "acbfe58c7b5ab135179afadb179db1df680d7835",
+        "date": "2026-08-18T01:36:56+07:00",
+        "author": "Hermes",
+        "subject": "TASK-013: Smart-Edit security hardening — trusted model loading + input validation"
+      },
+      {
+        "sha": "7881c36826b1d83025188e15780e9c3d768b28fc",
+        "date": "2026-08-18T00:21:37+07:00",
+        "author": "Hermes",
+        "subject": "TASK-010 follow-up: ruff import sort fix"
+      },
+      {
+        "sha": "24e356d1ef06fa1d838cc47e6981b598c49efa0d",
+        "date": "2026-08-18T00:17:12+07:00",
+        "author": "Hermes",
+        "subject": "Merge TASK-010+011: Florence-2 grounding + SDXL inpainting (205 tests green, GPU verified)"
+      },
+      {
+        "sha": "e28ec53be44bce44feee37cc8f7e97748967c00b",
+        "date": "2026-08-18T00:16:55+07:00",
+        "author": "Hermes",
+        "subject": "TASK-010+011: Florence-2 grounding + SDXL inpainting (GPU verified)"
+      },
+      {
+        "sha": "3308322556fe1c6844f19150830e8e2e73a02cf9",
+        "date": "2026-08-17T21:45:50+07:00",
+        "author": "Hermes",
+        "subject": "Merge TASK-008+009: SAM2 manual + LaMa GPU removal"
+      },
+      {
+        "sha": "73555ff1e7f47e17b7b51197ce16cf320717377f",
+        "date": "2026-08-17T21:45:25+07:00",
+        "author": "Hermes",
+        "subject": "TASK-008+009 SAM 2.1 Tiny manual mask + LaMa object removal (GPU cuDNN fix)"
+      },
+      {
+        "sha": "7ea0a3eea66b8d4c9439eaac8d91e09c8bef0a03",
+        "date": "2026-08-17T20:56:22+07:00",
+        "author": "Hermes",
+        "subject": "Merge TASK-007 into feature/smart-edit"
+      },
+      {
+        "sha": "d99ac05e7fcfea9be5380932719f80003a82d3a1",
+        "date": "2026-08-17T20:55:57+07:00",
+        "author": "Hermes",
+        "subject": "docs: Smart Edit planning artifacts (GPT review, Devin analysis, implementation plan)"
+      },
+      {
+        "sha": "e7ee4cf662c34d672d162796ee2fc7e11a15d28f",
+        "date": "2026-08-17T20:55:03+07:00",
+        "author": "Hermes",
+        "subject": "TASK-007 Tier A worker (OpenCV/Pillow) + Vietnamese parser v1"
+      },
+      {
+        "sha": "6d654b0d19aa70e5c4a113a0d80d435ef1077a42",
+        "date": "2026-08-17T20:31:44+07:00",
+        "author": "Hermes",
+        "subject": "Merge TASK-006 into feature/smart-edit"
+      },
+      {
+        "sha": "b20658c7168f78ca073510a0e53daa3dda594c4a",
+        "date": "2026-08-17T20:30:38+07:00",
+        "author": "Hermes",
+        "subject": "TASK-006 Smart Edit Foundation: venv-edit + GPU Resource Manager + EditPlan contracts"
+      }
+    ],
+    "top_churn_90_days": [
+      {
+        "path": "docs/codex-review-output.txt",
+        "added": 5516,
+        "deleted": 0,
+        "churn": 5516
+      },
+      {
+        "path": "PROJECT_CURRENT_STATE_REPORT.md",
+        "added": 2302,
+        "deleted": 1217,
+        "churn": 3519
+      },
+      {
+        "path": "PROJECT_CURRENT_STATE_REPORT_2026-08-18.md",
+        "added": 1437,
+        "deleted": 0,
+        "churn": 1437
+      },
+      {
+        "path": "app/ui/main_ui.py",
+        "added": 928,
+        "deleted": 73,
+        "churn": 1001
+      },
+      {
+        "path": "docs/chatgpt-hybrid-editing-response.md",
+        "added": 977,
+        "deleted": 0,
+        "churn": 977
+      },
+      {
+        "path": "app/services/smart_edit_service.py",
+        "added": 633,
+        "deleted": 298,
+        "churn": 931
+      },
+      {
+        "path": "docs/chatgpt-critique-response-2026-08-17.md",
+        "added": 924,
+        "deleted": 0,
+        "churn": 924
+      },
+      {
+        "path": "engines/smart-edit/edit_worker.py",
+        "added": 722,
+        "deleted": 165,
+        "churn": 887
+      },
+      {
+        "path": "AUTHORIZATION_ANALYSIS_2026-08-20.md",
+        "added": 883,
+        "deleted": 0,
+        "churn": 883
+      },
+      {
+        "path": "engines/smart-edit/model_config.py",
+        "added": 543,
+        "deleted": 284,
+        "churn": 827
+      },
+      {
+        "path": "app/services/facefusion_service.py",
+        "added": 668,
+        "deleted": 35,
+        "churn": 703
+      },
+      {
+        "path": "app/services/smart_edit_manifest.py",
+        "added": 506,
+        "deleted": 172,
+        "churn": 678
+      },
+      {
+        "path": "app/services/smart_edit_router.py",
+        "added": 620,
+        "deleted": 49,
+        "churn": 669
+      },
+      {
+        "path": ".agents/skills/aionui-config/SKILL.md",
+        "added": 620,
+        "deleted": 0,
+        "churn": 620
+      },
+      {
+        "path": ".codex/skills/aionui-config/SKILL.md",
+        "added": 620,
+        "deleted": 0,
+        "churn": 620
+      },
+      {
+        "path": ".devin/skills/aionui-config/SKILL.md",
+        "added": 620,
+        "deleted": 0,
+        "churn": 620
+      },
+      {
+        "path": ".opencode/skills/aionui-config/SKILL.md",
+        "added": 620,
+        "deleted": 0,
+        "churn": 620
+      },
+      {
+        "path": ".windsurf/skills/aionui-config/SKILL.md",
+        "added": 620,
+        "deleted": 0,
+        "churn": 620
+      },
+      {
+        "path": "tests/test_smart_edit_service.py",
+        "added": 435,
+        "deleted": 183,
+        "churn": 618
+      },
+      {
+        "path": "scripts/download-smart-edit-models.py",
+        "added": 395,
+        "deleted": 196,
+        "churn": 591
+      },
+      {
+        "path": "app/services/input_validator.py",
+        "added": 543,
+        "deleted": 13,
+        "churn": 556
+      },
+      {
+        "path": "docs/chatgpt-critique-reorder-response.md",
+        "added": 537,
+        "deleted": 0,
+        "churn": 537
+      },
+      {
+        "path": "tests/test_service.py",
+        "added": 534,
+        "deleted": 2,
+        "churn": 536
+      },
+      {
+        "path": "tests/test_smart_edit_worker.py",
+        "added": 464,
+        "deleted": 19,
+        "churn": 483
+      },
+      {
+        "path": "tests/test_smart_edit_manifest.py",
+        "added": 336,
+        "deleted": 135,
+        "churn": 471
+      },
+      {
+        "path": "docs/venv-edit-smoke.md",
+        "added": 316,
+        "deleted": 131,
+        "churn": 447
+      },
+      {
+        "path": "tests/test_input_validator.py",
+        "added": 379,
+        "deleted": 62,
+        "churn": 441
+      },
+      {
+        "path": ".agents/skills/officecli/SKILL.md",
+        "added": 431,
+        "deleted": 0,
+        "churn": 431
+      },
+      {
+        "path": ".codex/skills/officecli/SKILL.md",
+        "added": 431,
+        "deleted": 0,
+        "churn": 431
+      },
+      {
+        "path": ".devin/skills/officecli/SKILL.md",
+        "added": 431,
+        "deleted": 0,
+        "churn": 431
+      }
+    ]
+  },
+  "run_id": "2026-08-25T001126Z-2cb7964b"
+}

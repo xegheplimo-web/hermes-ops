@@ -1,0 +1,15 @@
+{
+  "run_id": "2026-08-25T001126Z-2cb7964b",
+  "created_at": "2026-08-25T00:11:26+00:00",
+  "status": "EVIDENCE_COLLECTED",
+  "project": "FaceCraft-VN",
+  "branch": "feature/smart-edit",
+  "commit_sha": "2cb7964bb5e46978f93c205d82bdeec71b23bab6",
+  "dirty": true,
+  "review_mode": "openai-api",
+  "artifacts": {
+    "repo_evidence": "repo-evidence.json",
+    "repo_evidence_md": "repo-evidence.md",
+    "state": "state.json"
+  }
+}
