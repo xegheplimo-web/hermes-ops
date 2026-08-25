@@ -74,6 +74,23 @@ def _read_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _read_json_optional(path: Path, default: Any = None) -> Any:
+    """Read an artifact that legitimately may not exist yet.
+
+    `_read_json` stays strict on purpose: a missing required artifact is a real
+    pipeline error and must surface. But some artifacts are conditional —
+    `independent-review.json` only exists for HIGH/CRITICAL runs, and
+    `reconciled-review.json` is absent on a dry run that stops early. Reading
+    those with the strict helper turns "not applicable" into a crash.
+    """
+    if default is None:
+        default = {}
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (FileNotFoundError, json.JSONDecodeError):
+        return default
+
+
 def _load_state(out_dir: Path) -> dict:
     state_path = out_dir / "state.json"
     default_trace = out_dir.name
@@ -479,11 +496,38 @@ def stage_final_risk(out_dir: Path) -> dict:
             break
 
     ci = _read_json(out_dir / "ci-findings.json")
+
+    # FINAL RISK must see every verification signal the pipeline produced, not
+    # just CI. Passing only --test-results left review findings and security
+    # findings invisible to the recalculation, so a CRITICAL reviewer finding
+    # could not escalate risk and the run reached the policy gate understated.
+    reconciled = _read_json_optional(out_dir / "reconciled-review.json")
+    review_findings = reconciled.get("findings") or reconciled.get("reconciled") or []
+    if isinstance(review_findings, dict):
+        review_findings = list(review_findings.values())
+
+    independent = _read_json_optional(out_dir / "independent-review.json")
+    security_findings = [
+        f for f in (independent.get("findings") or [])
+        if str(f.get("category", "")).lower() in ("security", "secret", "vulnerability")
+        or str(f.get("severity", "")).lower() == "critical"
+    ]
+
+    # Changed paths drive the sensitive-path escalation rules; an empty list
+    # disabled that whole check.
+    changed_paths = []
+    for t in plan.get("tasks", []):
+        for p in (t.get("write_scope") or t.get("scope") or []):
+            if isinstance(p, str) and p not in changed_paths:
+                changed_paths.append(p)
+
     result = _run_script(
         "final_risk.py",
         "--early-risk", early_risk,
-        "--changed-paths", json.dumps([]),
+        "--changed-paths", json.dumps(changed_paths),
         "--test-results", json.dumps(ci),
+        "--review-findings", json.dumps(review_findings),
+        "--security-findings", json.dumps(security_findings),
         "--out", str(out_dir / "final-risk.json"),
     )
     _save_state(out_dir, "FINAL_RISK_RECALCULATED", 88, result)

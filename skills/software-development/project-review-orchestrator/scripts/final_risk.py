@@ -56,14 +56,43 @@ def recalculate(early_risk, changed_paths=None, test_results=None,
             reasons.append(f"Sensitive path '{h}' -> {RV[cur]}")
 
     tr = test_results or {}
-    fc = tr.get("fail_count", 0) or tr.get("fail", 0)
-    pc = tr.get("pass_count", 0) or tr.get("pass", 0)
+    # Accept every shape the pipeline actually emits. collect_repo_evidence and
+    # the CI collector write `tests_passed`/`tests_failed`; older callers wrote
+    # `fail_count`/`pass_count`; vitest-style summaries use `failed`/`passed`.
+    # Reading only one spelling silently zeroes the count, and a zeroed fail
+    # count means a red build never escalates risk — a gate bypass, not a
+    # cosmetic bug.
+    def _count(*keys: str) -> int:
+        for k in keys:
+            v = tr.get(k)
+            if isinstance(v, bool):
+                continue
+            if isinstance(v, (int, float)) and v:
+                return int(v)
+        return 0
+
+    fc = _count("fail_count", "fail", "failed", "tests_failed")
+    pc = _count("pass_count", "pass", "passed", "tests_passed")
+
+    # An explicitly red CI is a failure signal even when no per-test counts
+    # were reported.
+    ci_status = str(tr.get("ci_status", "") or "").lower()
+    ci_green = tr.get("ci_green")
+    ci_red = ci_status in ("fail", "failed", "failing", "red", "error") or ci_green is False
+    ci_unknown = ci_status == "unknown" or (ci_green is None and ci_status == "" and not fc and not pc)
+
     if fc > 0:
         if cur < RI[RISK_HIGH]:
             cur = RI[RISK_HIGH]
         reasons.append(f"Test failures ({fc}) -> HIGH")
-    elif pc > 0 and fc == 0:
+    elif ci_red:
+        if cur < RI[RISK_HIGH]:
+            cur = RI[RISK_HIGH]
+        reasons.append("CI reported failing -> HIGH")
+    elif pc > 0 and fc == 0 and not ci_unknown:
         de.append(f"All {pc} tests pass")
+    elif ci_unknown:
+        reasons.append("Verification status unknown — no downgrade evidence")
 
     rf = review_findings or []
     oc = sum(1 for f in rf if f.get("severity","").lower()=="critical"
