@@ -483,9 +483,21 @@ def _normalize_severity(raw: str) -> str | None:
     return mapping.get(key)
 
 
+_CONFIDENCE_WORDS = {
+    "certain": 1.0, "very high": 0.95, "high": 0.9,
+    "medium-high": 0.75, "moderate": 0.6, "medium": 0.6, "med": 0.6,
+    "medium-low": 0.4, "low": 0.25, "very low": 0.1,
+    "speculative": 0.1, "unknown": 0.0, "unverified": 0.0,
+}
+
+
 def _normalize_confidence(raw: str) -> float | None:
-    """Parse a confidence value (0-1 or 0%-100%)."""
+    """Parse a confidence value (0-1, 0%-100%, or a word like high/medium/low)."""
     cleaned = raw.strip()
+    # Word-form confidence: LLM and human reviewers write these naturally.
+    word = cleaned.lower().strip(".,;:!")
+    if word in _CONFIDENCE_WORDS:
+        return _CONFIDENCE_WORDS[word]
     # Remove percent sign
     if cleaned.endswith("%"):
         try:

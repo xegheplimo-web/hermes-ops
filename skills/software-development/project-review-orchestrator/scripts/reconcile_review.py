@@ -47,6 +47,43 @@ REQUIRED_SECTIONS = frozenset([
 ])
 
 
+CONFIDENCE_WORDS = {
+    "certain": 1.0, "very high": 0.95, "high": 0.9,
+    "medium-high": 0.75, "moderate": 0.6, "medium": 0.6, "med": 0.6,
+    "medium-low": 0.4, "low": 0.25, "very low": 0.1,
+    "speculative": 0.1, "unknown": 0.0, "unverified": 0.0,
+}
+
+
+def parse_confidence(value: object, default: float = 0.5) -> float:
+    """Coerce a reviewer-supplied confidence into a 0.0-1.0 float.
+
+    External reviewers (LLM or human) legitimately write "high"/"medium"/"low"
+    or "80%" instead of a bare float. A hard float() here used to raise
+    ValueError and abort the whole reconcile run, silently discarding every
+    finding in the packet. Unparseable input falls back to *default* and is
+    clamped, never raised.
+    """
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, (int, float)):
+        return max(0.0, min(1.0, float(value)))
+    if isinstance(value, str):
+        s = value.strip().lower().strip(".,;:!")
+        if s in CONFIDENCE_WORDS:
+            return CONFIDENCE_WORDS[s]
+        if s.endswith("%"):
+            try:
+                return max(0.0, min(1.0, float(s.rstrip("%")) / 100.0))
+            except ValueError:
+                return default
+        try:
+            return max(0.0, min(1.0, float(s)))
+        except ValueError:
+            return default
+    return default
+
+
 def resolve_section(heading: str) -> str:
     """Return the canonical section name for a heading."""
     stripped = heading.strip().upper().rstrip("#").strip()
@@ -152,7 +189,7 @@ def classify_disposition(
     - DISAGREE  => Hermes disagrees
     """
     severity = finding.get("severity", "medium").lower()
-    confidence = float(finding.get("confidence", 0.5))
+    confidence = parse_confidence(finding.get("confidence", 0.5))
     claim = str(finding.get("claim", ""))
     evidence_refs = finding.get("evidence_refs", [])
 
@@ -237,7 +274,7 @@ def reconcile(
         finding_id = finding.get("id", f"external-finding-{i}")
         title = str(finding.get("title", ""))
         severity = finding.get("severity", "medium").lower()
-        confidence = float(finding.get("confidence", 0.5))
+        confidence = parse_confidence(finding.get("confidence", 0.5))
         claim = str(finding.get("claim", ""))
         evidence_refs = finding.get("evidence_refs", [])
 
