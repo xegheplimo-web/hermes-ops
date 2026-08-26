@@ -78,6 +78,7 @@
     }
   },
   "risk_to_stage": {
+    "TRIVIAL": "trivial_task",
     "LOW": "trivial_task",
     "MEDIUM": "normal_task",
     "HIGH": "high_critical_task",

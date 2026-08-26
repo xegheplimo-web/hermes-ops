@@ -93,8 +93,21 @@ class ModelResolver:
         )
 
     def resolve_for_task(self, risk: str, task_type: str | None = None) -> ModelAssignment:
-        """Resolve the Devin implementer model for a task by risk."""
-        return self.resolve(risk)
+        """Resolve the Devin implementer model for a task by risk.
+
+        Never raises on an unmapped risk level: an unknown risk is treated as the
+        most conservative mapped level so a mid-pipeline dispatch cannot crash on
+        a risk name the config has not caught up with. Escalating (rather than
+        defaulting down) keeps an unknown risk from being handled too cheaply.
+        """
+        try:
+            return self.resolve(risk)
+        except ValueError:
+            risk_map = self._config.get("risk_to_stage", {})
+            for level in ("CRITICAL", "HIGH", "MEDIUM", "LOW"):
+                if level in risk_map:
+                    return self.resolve(level)
+            raise
 
     def _stage_for(self, stage_or_risk: str, risk: str | None = None) -> str:
         stages = self._config.get("stages", {})
