@@ -1,0 +1,279 @@
+{
+  "schema_version": "1.0",
+  "authority_model": {
+    "orchestrator": "HERMES",
+    "cognitive_memory": "AgentMemory",
+    "runtime_execution_state": "OpsDB",
+    "implementation_gateway": "DevinAdapter",
+    "implementation_executor": "Devin",
+    "change_control_plane": "GitHub",
+    "deterministic_evidence": [
+      "CI",
+      "SecurityScanners",
+      "Tests"
+    ],
+    "review_signals": [
+      "OpenAIReviewAdapter",
+      "CodeRabbit",
+      "HumanReviewer"
+    ],
+    "enforcement": "hermes/policy-gate",
+    "critical_authority": "Human"
+  },
+  "actors": [
+    {
+      "name": "USER",
+      "role": "principal",
+      "allowed": [
+        "request work",
+        "approve critical actions when required",
+        "inspect artifacts"
+      ],
+      "forbidden": [
+        "bypass policy-gate through informal instruction"
+      ]
+    },
+    {
+      "name": "HERMES",
+      "role": "orchestrator",
+      "allowed": [
+        "plan",
+        "reconcile evidence",
+        "route tasks",
+        "invoke skills",
+        "prepare review packets",
+        "coordinate agents"
+      ],
+      "forbidden": [
+        "bypass policy-gate",
+        "treat AgentMemory as runtime truth",
+        "let external reviewer implement code"
+      ]
+    },
+    {
+      "name": "AgentMemory",
+      "role": "cognitive_memory",
+      "allowed": [
+        "provide historical decisions",
+        "provide lessons",
+        "provide incidents",
+        "store verified durable lessons"
+      ],
+      "forbidden": [
+        "own task queue",
+        "own lease state",
+        "override repository evidence"
+      ]
+    },
+    {
+      "name": "OpsDB",
+      "role": "runtime_truth",
+      "allowed": [
+        "store task state",
+        "store queue state",
+        "store leases",
+        "store attempts"
+      ],
+      "forbidden": [
+        "replace Git evidence",
+        "replace policy-gate"
+      ]
+    },
+    {
+      "name": "EvidenceCollector",
+      "role": "deterministic_evidence",
+      "allowed": [
+        "read repository metadata",
+        "count files deterministically",
+        "collect Git state",
+        "collect manifests/tests/CI stats"
+      ],
+      "forbidden": [
+        "modify repository",
+        "export secrets"
+      ]
+    },
+    {
+      "name": "RedactionGate",
+      "role": "security_boundary",
+      "allowed": [
+        "block secret export",
+        "redact sensitive patterns",
+        "require manual review when uncertain"
+      ],
+      "forbidden": [
+        "send raw secrets externally"
+      ]
+    },
+    {
+      "name": "OpenAIReviewAdapter",
+      "role": "external_review_signal",
+      "allowed": [
+        "receive sanitized packet",
+        "produce structured critique"
+      ],
+      "forbidden": [
+        "modify repository",
+        "create tasks directly",
+        "approve merges",
+        "access secrets"
+      ]
+    },
+    {
+      "name": "ChatGPTHumanMode",
+      "role": "manual_external_review",
+      "allowed": [
+        "human-visible critique",
+        "manual copy/export by user"
+      ],
+      "forbidden": [
+        "programmatic scraping of ChatGPT consumer output"
+      ]
+    },
+    {
+      "name": "DevinCodemap",
+      "role": "architecture_navigation",
+      "allowed": [
+        "map code flows",
+        "identify candidate files",
+        "support planning"
+      ],
+      "forbidden": [
+        "act as final proof",
+        "modify repository"
+      ]
+    },
+    {
+      "name": "DevinAdapter",
+      "role": "implementation_gateway",
+      "allowed": [
+        "dispatch approved tasks to Devin",
+        "track Devin sessions"
+      ],
+      "forbidden": [
+        "bypass Ops DB",
+        "bypass policy-gate"
+      ]
+    },
+    {
+      "name": "Devin",
+      "role": "implementation_executor",
+      "allowed": [
+        "implement assigned tasks",
+        "create branch/worktree",
+        "open PR"
+      ],
+      "forbidden": [
+        "merge without gates",
+        "change policy",
+        "bypass DevinAdapter"
+      ]
+    },
+    {
+      "name": "GitHub",
+      "role": "change_control_plane",
+      "allowed": [
+        "host branches",
+        "host PRs",
+        "record review history"
+      ],
+      "forbidden": [
+        "be bypassed by direct repo mutation"
+      ]
+    },
+    {
+      "name": "CI",
+      "role": "deterministic_evidence",
+      "allowed": [
+        "run tests",
+        "produce build/test evidence"
+      ],
+      "forbidden": [
+        "approve policy exceptions"
+      ]
+    },
+    {
+      "name": "SecurityScanners",
+      "role": "deterministic_evidence",
+      "allowed": [
+        "produce security findings"
+      ],
+      "forbidden": [
+        "expose secrets in reports"
+      ]
+    },
+    {
+      "name": "CodeRabbit",
+      "role": "review_signal",
+      "allowed": [
+        "comment on PR",
+        "suggest changes"
+      ],
+      "forbidden": [
+        "merge autonomously",
+        "override policy-gate"
+      ]
+    },
+    {
+      "name": "hermes/policy-gate",
+      "role": "enforcement",
+      "allowed": [
+        "pass or fail changes",
+        "require repair",
+        "require human approval"
+      ],
+      "forbidden": [
+        "be bypassed by any agent"
+      ]
+    },
+    {
+      "name": "Human",
+      "role": "critical_authority",
+      "allowed": [
+        "approve critical changes",
+        "resolve conflicts",
+        "grant exceptions explicitly"
+      ],
+      "forbidden": [
+        "be silently bypassed for critical actions"
+      ]
+    }
+  ],
+  "routing_rules": {
+    "trivial_low_risk": [
+      "small scope",
+      "no security-sensitive path",
+      "no architecture change",
+      "no data migration",
+      "clear verification"
+    ],
+    "standard_governed": [
+      "normal feature work",
+      "bounded risk",
+      "requires PR and CI"
+    ],
+    "high_risk_or_critical": [
+      "auth",
+      "secrets",
+      "billing",
+      "payment",
+      "migration",
+      "production deploy",
+      "data integrity",
+      "policy-gate",
+      "orchestrator logic"
+    ]
+  },
+  "hard_rules": [
+    "No execution task without evidence_refs.",
+    "No implementation before external review when policy requires it.",
+    "No external reviewer directly changes repository.",
+    "No AgentMemory record is authoritative runtime state.",
+    "No task is marked DONE without verification evidence.",
+    "No HIGH task passes without required independent review.",
+    "No CRITICAL task passes without human approval.",
+    "No PR may bypass CI/security requirements.",
+    "No external packet may knowingly contain secrets.",
+    "Review commit SHA must match code snapshot or drift must be reconciled."
+  ]
+}
