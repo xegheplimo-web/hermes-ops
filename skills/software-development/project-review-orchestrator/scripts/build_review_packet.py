@@ -43,7 +43,38 @@ SECRET_PATTERNS = [
     (re.compile(r"\S*?\.(?:pem|key)\b"), "[REDACTED_CERT_FILE]"),
     # Browser profile paths referencing login data / cookies
     (re.compile(r"(?i)\S*(?:browser|profile)\S*(?:\\|/)\S*(?:login\s*data|cookies)\S*"), "[REDACTED_BROWSER_PATH]"),
+    # Connection-string credentials: scheme://user:password@host
+    (re.compile(r"\b([a-zA-Z][a-zA-Z0-9+.-]*://)([^:/@\s]+):([^@/\s]+)@"), r"\1\2:[REDACTED_PASSWORD]@"),
 ]
+
+
+def redact_json(node):
+    """Recursively redact every string inside a JSON-like structure.
+
+    The evidence snapshot is attacker-influenced data (file contents, env
+    references, config samples). It MUST pass through the same redaction as the
+    analysis before it can leave the machine. Returns (redacted_node, count).
+    """
+    if isinstance(node, str):
+        return redact(node)
+    if isinstance(node, dict):
+        out = {}
+        total = 0
+        for k, v in node.items():
+            new_k, nk = redact(k) if isinstance(k, str) else (k, 0)
+            new_v, nv = redact_json(v)
+            out[new_k] = new_v
+            total += nk + nv
+        return out, total
+    if isinstance(node, list):
+        out = []
+        total = 0
+        for v in node:
+            new_v, nv = redact_json(v)
+            out.append(new_v)
+            total += nv
+        return out, total
+    return node, 0
 
 
 def _has_high_entropy(s: str) -> bool:
@@ -90,9 +121,15 @@ def main() -> int:
     args = parser.parse_args()
     trace_id = get_trace_id(args) if _HAS_TRACE else (os.environ.get("HERMES_TRACE_ID", ""))
     try:
-        evidence = json.loads(Path(args.evidence).read_text(encoding="utf-8"))
+        evidence_raw = json.loads(Path(args.evidence).read_text(encoding="utf-8"))
         analysis_raw = Path(args.analysis).read_text(encoding="utf-8")
-        analysis, redactions = redact(analysis_raw)
+        analysis, analysis_redactions = redact(analysis_raw)
+        # Invariant M: the evidence snapshot leaves this machine too, so it must
+        # pass through the SAME redaction as the analysis. Redacting only the
+        # analysis leaks any secret captured in repo evidence (env files, config
+        # samples, command output) straight to the external reviewer.
+        evidence, evidence_redactions = redact_json(evidence_raw)
+        redactions = analysis_redactions + evidence_redactions
         packet = {
             "schema_version": "1.0",
             "purpose": "independent_project_review",
@@ -104,6 +141,9 @@ def main() -> int:
             "security": {
                 "source_files_included": False,
                 "redaction_matches": redactions,
+                "redaction_matches_analysis": analysis_redactions,
+                "redaction_matches_evidence": evidence_redactions,
+                "redacted_scopes": ["hermes_analysis", "repository_snapshot"],
                 "warning": "The packet is sanitized but must still be treated as potentially sensitive.",
             },
         }
