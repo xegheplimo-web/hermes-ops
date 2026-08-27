@@ -63,10 +63,11 @@ roles = json.loads(roles_p.read_text(encoding="utf-8")) if ok else {}
 # ---- T4: checklist assertions on the permission matrix ----
 actors = {a["name"]: a for a in roles.get("actors", [])}
 required = ["USER","HERMES","AgentMemory","OpsDB","EvidenceCollector","RedactionGate",
-            "OpenAIReviewAdapter","ChatGPTHumanMode","DevinCodemap","DevinAdapter","Devin",
-            "GitHub","CI","SecurityScanners","CodeRabbit","hermes/policy-gate","Human"]
+            "OpenAIReviewAdapter","ChatGPTHumanMode","CodexReviewer","DevinCodemap",
+            "DevinAdapter","Devin","OpenCode","GitHub","CI","SecurityScanners",
+            "CodeRabbit","hermes/policy-gate","Human"]
 missing_actors = [a for a in required if a not in actors]
-rec("T4a", "all 17 required actors present", "PASS" if not missing_actors else "FAIL", f"missing={missing_actors}")
+rec("T4a", f"all {len(required)} required actors present", "PASS" if not missing_actors else "FAIL", f"missing={missing_actors}")
 
 no_write = "modify repository" in actors.get("OpenAIReviewAdapter", {}).get("forbidden", [])
 rec("T4b", "external reviewer has no write authority", "PASS" if no_write else "FAIL",
@@ -90,6 +91,40 @@ rec("T4f", "every actor has allowed+forbidden", "PASS" if not every_actor_has_bo
 
 hr = roles.get("hard_rules", [])
 rec("T4g", "hard_rules >= 10 entries", "PASS" if len(hr) >= 10 else "FAIL", f"count={len(hr)}")
+
+# Codex must be READ-ONLY: no write verb may appear in its allowed list
+codex = actors.get("CodexReviewer", {})
+write_verbs = ("edit", "commit", "push", "merge", "implement", "modify")
+codex_writes = [a for a in codex.get("allowed", [])
+                if any(v in a.lower() for v in write_verbs)]
+rec("T4h", "Codex reviewer has no write verb in allowed", "PASS" if not codex_writes else "FAIL",
+    str(codex_writes))
+rec("T4i", "Codex reviewer explicitly forbidden from editing files",
+    "PASS" if "edit files" in codex.get("forbidden", []) else "FAIL",
+    str(codex.get("forbidden")))
+
+# OpenCode is SECONDARY: it may implement, but never silently displace Devin
+oc = actors.get("OpenCode", {})
+rec("T4j", "OpenCode declared secondary executor",
+    "PASS" if "secondary" in oc.get("role", "") else "FAIL", oc.get("role"))
+rec("T4k", "OpenCode cannot replace Devin without a recorded reason",
+    "PASS" if any("without a recorded reason" in f for f in oc.get("forbidden", [])) else "FAIL",
+    str(oc.get("forbidden")))
+rec("T4l", "OpenCode cannot write outside assigned scope",
+    "PASS" if "write outside the assigned scope" in oc.get("forbidden", []) else "FAIL",
+    str(oc.get("forbidden")))
+
+# authority model names both executors and the readonly reviewer
+am = roles.get("authority_model", {})
+rec("T4m", "authority_model names secondary executor + readonly reviewer",
+    "PASS" if am.get("secondary_implementation_executor") == "OpenCode"
+    and am.get("readonly_reviewer") == "CodexReviewer" else "FAIL",
+    f"{am.get('secondary_implementation_executor')} / {am.get('readonly_reviewer')}")
+
+# reviewer-never-executor must be an explicit hard rule
+rec("T4n", "hard_rules forbid reviewer becoming executor",
+    "PASS" if any("reviewer may never become an executor" in r.lower() for r in hr) else "FAIL",
+    str([r for r in hr if "reviewer" in r.lower()]))
 
 # ---- T5: idempotency / no silent overwrite on 2nd run ----
 first_mtime = roles_p.stat().st_mtime_ns

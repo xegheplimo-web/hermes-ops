@@ -6,6 +6,8 @@
     "runtime_execution_state": "OpsDB",
     "implementation_gateway": "DevinAdapter",
     "implementation_executor": "Devin",
+    "secondary_implementation_executor": "OpenCode",
+    "readonly_reviewer": "CodexReviewer",
     "change_control_plane": "GitHub",
     "deterministic_evidence": [
       "CI",
@@ -14,6 +16,7 @@
     ],
     "review_signals": [
       "OpenAIReviewAdapter",
+      "CodexReviewer",
       "CodeRabbit",
       "HumanReviewer"
     ],
@@ -131,6 +134,26 @@
       ]
     },
     {
+      "name": "CodexReviewer",
+      "role": "readonly_independent_reviewer",
+      "allowed": [
+        "read repository at the reviewed SHA",
+        "produce structured findings with severity and confidence",
+        "challenge Hermes assumptions",
+        "challenge executor claims"
+      ],
+      "forbidden": [
+        "edit files",
+        "commit",
+        "push",
+        "merge",
+        "implement fixes",
+        "modify tests",
+        "create authoritative tasks",
+        "approve policy"
+      ]
+    },
+    {
       "name": "DevinCodemap",
       "role": "architecture_navigation",
       "allowed": [
@@ -167,6 +190,28 @@
         "merge without gates",
         "change policy",
         "bypass DevinAdapter"
+      ]
+    },
+    {
+      "name": "OpenCode",
+      "role": "secondary_implementation_repair_executor",
+      "allowed": [
+        "implement a bounded repair task assigned by Hermes",
+        "refactor within the assigned write scope",
+        "perform a second implementation pass",
+        "act as fallback implementer when Devin is unavailable",
+        "create branch/worktree",
+        "open PR"
+      ],
+      "forbidden": [
+        "replace Devin as primary executor without a recorded reason",
+        "decide architecture",
+        "merge without gates",
+        "approve its own task",
+        "bypass Ops DB",
+        "change policy",
+        "write outside the assigned scope",
+        "treat a review finding as fact before Hermes reconciles it"
       ]
     },
     {
@@ -268,12 +313,18 @@
     "No execution task without evidence_refs.",
     "No implementation before external review when policy requires it.",
     "No external reviewer directly changes repository.",
+    "Codex is READ-ONLY and may not modify repository files.",
+    "Devin is the primary implementation executor; OpenCode is secondary.",
+    "OpenCode acts only on a bounded repair task assigned by Hermes.",
+    "Choosing OpenCode as primary requires a recorded executor_override_reason.",
+    "A reviewer may never become an executor.",
     "No AgentMemory record is authoritative runtime state.",
     "No task is marked DONE without verification evidence.",
     "No HIGH task passes without required independent review.",
     "No CRITICAL task passes without human approval.",
     "No PR may bypass CI/security requirements.",
     "No external packet may knowingly contain secrets.",
-    "Review commit SHA must match code snapshot or drift must be reconciled."
+    "Review commit SHA must match code snapshot or drift must be reconciled.",
+    "No unbounded retry loops; exhausted attempts escalate instead of retrying."
   ]
 }

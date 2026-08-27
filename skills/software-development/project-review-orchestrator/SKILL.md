@@ -8,7 +8,7 @@ platforms: [linux, macos, windows]
 metadata:
   hermes:
     tags: [repository, review, planning, codemap]
-    related_skills: []
+    related_skills: [project-agent-bootstrapper]
     requires_toolsets: [terminal]
 ---
 
@@ -502,9 +502,21 @@ Normal project governance remains authoritative:
 
 Risk routing:
 
-- LOW/MED: normal automated verification + Hermes reconciliation.
-- HIGH: independent OpenAI review as required by project policy.
-- CRITICAL: OpenAI review + human authorization.
+- TRIVIAL/LOW/MEDIUM: normal automated verification + Hermes reconciliation.
+- HIGH: independent review (Codex or OpenAI) as required by project policy.
+- CRITICAL: independent review + durable human authorization.
+
+The gate is 4-way, not pass/fail:
+
+```text
+PASS      → proceed to merge
+REPAIR    → bounded repair task, then re-verify
+ESCALATE  → attempts exhausted or risk raised; needs higher authority
+BLOCK     → refuse; a hard invariant would be violated
+```
+
+REPAIR routes to a bounded task (OpenCode for repair of a Devin diff, or a Devin
+follow-up when Hermes decides so). Exhausted attempts ESCALATE — they never loop.
 
 This skill never overrides `hermes/policy-gate`.
 
@@ -540,6 +552,35 @@ Completion criterion:
 - transient run state remains in Ops DB/artifacts.
 
 ## Pitfalls
+
+### Redaction Gate only sanitized the analysis, not the evidence
+
+`build_review_packet.py` redacted `--analysis` but embedded `--evidence` into
+`repository_snapshot` verbatim, then reported `redaction_matches: 0`. Any secret
+captured in repo evidence (env files, config samples, command output, connection
+strings) went straight to the external reviewer while the packet claimed to be
+sanitized — a silent Invariant M violation.
+
+Fixed: `redact_json()` walks the evidence recursively (dict keys included) through
+the same `SECRET_PATTERNS`, and `security` now reports
+`redaction_matches_analysis` / `redaction_matches_evidence` / `redacted_scopes`
+separately. A `scheme://user:password@host` pattern was also added — DSN
+passwords previously survived both paths.
+
+Regression guard: `tests/test_redaction_gate.py` feeds 8 real secret shapes
+through both `--analysis` and `--evidence` and greps the OUTPUT packet for the
+raw value. Exits non-zero on any leak. Run it after ANY change to redaction.
+
+Rule: anything that leaves the machine passes through the redactor. A
+`redaction_matches` count is not proof of sanitization unless every scope in the
+packet was actually redacted.
+
+### `.env` drift makes real suites fail as if the code were broken
+
+Local `.env` pointed at `:5432/hermes` while `docker-compose.yml` and
+`.env.example` define `:55432/hermes_ops`. Two DB suites failed with
+`database "hermes" does not exist` — a config defect, not a regression. Verify
+the DSN against `docker-compose.yml` before treating a DB failure as code.
 
 ### External reviewer becomes the brain
 
