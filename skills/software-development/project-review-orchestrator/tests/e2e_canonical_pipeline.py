@@ -21,9 +21,13 @@ import sys
 import tempfile
 from pathlib import Path
 
-SKILL_DIR = Path("G:/Agent-Tools/hermes-ops/skills/software-development/project-review-orchestrator")
+SKILL_DIR = Path(__file__).resolve().parents[1]
 SCRIPTS = SKILL_DIR / "scripts"
-REPO = Path("G:/Agent-Tools/hermes-ops")
+# Resolve the repo root from this file's location, not a hardcoded path. The
+# absolute path baked in here only existed on one developer machine, so CI died
+# with FileNotFoundError: PosixPath('G:/Agent-Tools/hermes-ops') before a single
+# assertion ran.
+REPO = SKILL_DIR.parents[2]
 DATABASE_URL = os.getenv("DATABASE_URL", "postgres://hermes:hermesops@localhost:55432/hermes_ops")
 
 # Resolve current repo state (avoids hardcoded SHA after each push)
