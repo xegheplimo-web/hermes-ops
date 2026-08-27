@@ -553,6 +553,24 @@ Completion criterion:
 
 ## Pitfalls
 
+### A green local suite proves nothing about portability
+
+`e2e_canonical_pipeline.py` reported 21/21 PASSED for weeks while containing
+`Path("G:/Agent-Tools/hermes-ops")`. On CI it raised
+`FileNotFoundError: PosixPath('G:/Agent-Tools/hermes-ops')` at module import,
+before a single assertion ran. Derive paths from `Path(__file__).resolve()`, and
+prove portability by running the suite from a different working directory — not
+by re-reading the pass count.
+
+### `tsc -b` will not rebuild a deleted dist
+
+`test_policy_gate.py` bridges to `packages/gate/dist/bin.js`. Deleting `dist/`
+and running `pnpm build` prints success and emits nothing, because
+`tsconfig.tsbuildinfo` still says "up to date"; only `tsc -b --force` recovers
+it. A developer machine hides the whole problem behind a stale `dist/`. Any CI
+job that shells out to the gate must build it on its own runner and then assert
+the binary exists.
+
 ### Redaction Gate only sanitized the analysis, not the evidence
 
 `build_review_packet.py` redacted `--analysis` but embedded `--evidence` into
