@@ -51,3 +51,92 @@ jobs:
         env:
           DATABASE_URL: postgres://hermes:hermesops@localhost:5432/hermes_ops
         run: pnpm test:integration
+
+  skills-python-tests:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: hermes_ops
+          POSTGRES_USER: hermes
+          POSTGRES_PASSWORD: hermesops
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install Python deps
+        run: python -m pip install --quiet psycopg2-binary
+
+      - name: Configure git identity for repo-fixture tests
+        run: |
+          git config --global user.email "ci@hermes-ops.local"
+          git config --global user.name "hermes-ops CI"
+          git config --global init.defaultBranch main
+
+      - name: Governance unit tests (offline)
+        run: |
+          set -euo pipefail
+          fail=0
+          for f in skills/software-development/project-review-orchestrator/tests/test_*.py; do
+            case "$(basename "$f")" in
+              test_approval.py) continue ;;   # needs Ops DB, runs in the next step
+            esac
+            echo "::group::$f"
+            if python "$f"; then
+              echo "PASS $f"
+            else
+              echo "::error file=$f::Python governance test failed"
+              fail=1
+            fi
+            echo "::endgroup::"
+          done
+          echo "::group::project-agent-bootstrapper"
+          if python skills/software-development/project-agent-bootstrapper/tests/test_bootstrap_functional.py; then
+            echo "PASS bootstrapper"
+          else
+            echo "::error::bootstrapper functional test failed"
+            fail=1
+          fi
+          echo "::endgroup::"
+          exit $fail
+
+      - name: Ops DB tests + canonical E2E
+        env:
+          DATABASE_URL: postgres://hermes:hermesops@localhost:5432/hermes_ops
+        run: |
+          set -euo pipefail
+          # The Python governance tests read an ALREADY-migrated Ops DB; they do
+          # not create the schema themselves. Apply migrations via the canonical
+          # TS migrator first, otherwise every DB test fails on a missing table.
+          pnpm install --frozen-lockfile
+          pnpm db:migrate
+          pushd skills/software-development/project-review-orchestrator >/dev/null
+          python tests/test_approval.py
+          python tests/integration_ops_db.py
+          python tests/e2e_canonical_pipeline.py
+          popd >/dev/null
+
+      - name: Redaction gate must block secret egress
+        run: python skills/software-development/project-review-orchestrator/tests/test_redaction_gate.py

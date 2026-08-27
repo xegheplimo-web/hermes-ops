@@ -9,3 +9,6 @@ __pycache__/
 devin/
 .hermes/open-design/*/
 .hermes/reviews/*/
+.hermes/bootstrap/
+.hermes/governance/
+.pytest_cache/

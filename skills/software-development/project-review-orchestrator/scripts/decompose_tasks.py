@@ -72,7 +72,15 @@ def _norm_disp(disp: Any) -> str:
 
 
 def _risk(severity: str) -> str:
-    return SEVERITY_RISK_MAP.get(severity.lower().strip(), "medium")
+    """Map a reviewer severity to a canonical UPPERCASE risk level.
+
+    Risk levels are compared against the canonical ladder
+    (TRIVIAL/LOW/MEDIUM/HIGH/CRITICAL) throughout the pipeline and by the gate
+    binary. Emitting a lowercase value here made `risk` and `early_risk`
+    disagree in casing on the same task, so any consumer that compares without
+    normalising would silently mis-route the task.
+    """
+    return SEVERITY_RISK_MAP.get(severity.lower().strip(), "medium").upper()
 
 
 def _id(finding: dict) -> str:
@@ -281,7 +289,7 @@ def build_dag(reconciled: dict, codemap: str | None = None) -> dict:
                 "Do not implement fixes or refactor. This is fact-finding only."
             ),
             "dependencies": [],
-            "risk": "low",
+            "risk": "LOW",
             "executor": "devin",
             "acceptance_criteria": [
                 "Claim is verified or refuted with evidence",
