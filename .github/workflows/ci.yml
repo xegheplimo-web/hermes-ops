@@ -89,6 +89,19 @@ jobs:
       - name: Install Python deps
         run: python -m pip install --quiet psycopg2-binary
 
+      - name: Build the gate binary
+        run: |
+          set -euo pipefail
+          # test_policy_gate.py bridges to packages/gate/dist/bin.js. It is a
+          # build artifact, so a fresh CI checkout has no gate binary and every
+          # gate assertion fails with "hermes-policy-gate binary not found".
+          # A developer machine hides this because an earlier build left dist/ in
+          # place.
+          pnpm install --frozen-lockfile
+          pnpm build
+          test -f packages/gate/dist/bin.js \
+            || { echo "::error::gate binary missing after build"; exit 1; }
+
       - name: Configure git identity for repo-fixture tests
         run: |
           git config --global user.email "ci@hermes-ops.local"
@@ -130,7 +143,6 @@ jobs:
           # The Python governance tests read an ALREADY-migrated Ops DB; they do
           # not create the schema themselves. Apply migrations via the canonical
           # TS migrator first, otherwise every DB test fails on a missing table.
-          pnpm install --frozen-lockfile
           pnpm db:migrate
           pushd skills/software-development/project-review-orchestrator >/dev/null
           python tests/test_approval.py
