@@ -112,7 +112,7 @@ def build_prompt(packet: dict, review_mode: str = "primary") -> str:
     evidence = packet.get("repository_snapshot", {})
     analysis = packet.get("hermes_analysis", "")
 
-    return f"""You are an INDEPENDENT PRINCIPAL SOFTWARE REVIEWER.
+    prompt = f"""You are an INDEPENDENT PRINCIPAL SOFTWARE REVIEWER.
 
 You are not the orchestrator. You are not the implementer. You cannot approve a merge.
 Hermes is the authoritative project orchestrator. Your job is to CRITIQUE independently.

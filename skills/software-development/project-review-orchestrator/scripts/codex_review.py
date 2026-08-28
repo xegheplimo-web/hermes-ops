@@ -912,6 +912,9 @@ def main(argv: list[str] | None = None) -> int:
             "--out",
             str(out_dir / "external-review.json"),
         ]
+        if args.mode == "adversarial":
+            cmd.extend(["--review-mode", "adversarial"])   # CX-F9
+        cmd.extend(["--trace-id", args.trace_id])
         if args.model:
             cmd.extend(["--model", args.model])
 
@@ -940,6 +943,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # ── Load review packet ──────────────────────────────────────────────
     packet: dict | None = None
+    packet_sha256 = ""
     if args.packet:
         packet_path = Path(args.packet)
         if not packet_path.exists():
@@ -949,7 +953,10 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 1
         try:
-            packet = json.loads(packet_path.read_text(encoding="utf-8"))
+            # Read bytes ONCE: digest the exact bytes the reviewer is fed (CX-F8).
+            packet_bytes = packet_path.read_bytes()
+            packet_sha256 = hashlib.sha256(packet_bytes).hexdigest()
+            packet = json.loads(packet_bytes)
         except (OSError, json.JSONDecodeError) as exc:
             print(
                 json.dumps({"ok": False, "error": f"Failed to load packet: {exc}"}),
@@ -1056,19 +1063,19 @@ def main(argv: list[str] | None = None) -> int:
     # ── Validate ────────────────────────────────────────────────────────
     validation_errors = validate_review(review)
     if validation_errors:
-        # Log validation issues but still save the parsed result
-        validation_path = out_dir / "codex-validation-errors.json"
-        validation_path.write_text(
-            json.dumps(validation_errors, indent=2, ensure_ascii=False),
-            encoding="utf-8",
+        # Fail closed: never publish malformed review evidence (CX-F7).
+        print(
+            json.dumps({
+                "ok": False,
+                "error": f"Review response validation failed: {'; '.join(validation_errors)}",
+            }),
+            file=sys.stderr,
         )
+        return 1
 
     # ── Write external-review.json (same schema as openai_review.py) ────
     review["trace_id"] = args.trace_id
-    if args.packet:
-        review["packet_sha256"] = hashlib.sha256(Path(args.packet).read_bytes()).hexdigest()
-    else:
-        review["packet_sha256"] = ""
+    review["packet_sha256"] = packet_sha256
     review["invocation_id"] = uuid.uuid4().hex
     review["review_mode"] = "adversarial" if args.mode == "adversarial" else "primary"
     review["reviewer_identity"] = "codex"

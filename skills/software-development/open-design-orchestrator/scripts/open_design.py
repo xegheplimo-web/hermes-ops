@@ -412,14 +412,15 @@ def _run_gate_binary(
     reason = "GATE_PROCESS_FAILED" if proc.returncode != 0 or not output_valid else "GATE_CONTRACT_INVALID"
     if proc.returncode in (0, 1) and isinstance(parsed, dict):
         required = parsed.get("requiredGates")
-        risk_level = parsed.get("riskLevel")
+        parsed_risk = parsed.get("riskLevel")
         reason_code = parsed.get("reasonCode")
         detail = parsed.get("detail")
         contract_ok = (
             parsed.get("decision") in ("pass", "fail")
             and parsed.get("gate") in {"PASS", "REPAIR", "ESCALATE", "BLOCK"}
             and isinstance(reason_code, str) and reason_code.strip()
-            and risk_level in {"LOW", "MEDIUM", "HIGH", "CRITICAL"}
+            and parsed_risk in {"LOW", "MEDIUM", "HIGH", "CRITICAL"}
+            and parsed_risk == risk_level
             and isinstance(required, list) and len(required) > 0
             and all(isinstance(g, str) and g.strip() for g in required)
             and parsed.get("policyVersion") == "0.1.0"
@@ -494,6 +495,22 @@ def _validate_independent_review(out_dir: Path, state: dict) -> dict | None:
                 return None
         if f.get("severity") not in _VALID_INDEPENDENT_SEVERITIES:
             return None
+        conf = f.get("confidence")
+        if not isinstance(conf, (int, float)) or not (0.0 <= conf <= 1.0):
+            return None
+        if not (isinstance(f.get("claim"), str) and f["claim"].strip()):
+            return None
+        if not isinstance(f.get("evidence_refs"), list) or not all(
+            isinstance(e, str) and e.strip() for e in f["evidence_refs"]
+        ):
+            return None
+    # Substantive fields must be correctly typed and non-empty (CX-F7).
+    for key in ("missing_evidence", "priority_order"):
+        value = review.get(key)
+        if not isinstance(value, list):
+            return None
+    if not (isinstance(review.get("executive_summary"), str) and review["executive_summary"].strip()):
+        return None
 
     trace_id = state.get("trace_id") or out_dir.name
     if review.get("trace_id") != trace_id:
@@ -660,11 +677,17 @@ def stage_strategy_and_classify(out_dir: Path) -> dict:
     return {"classified": classified}
 
 
-def stage_external_review(out_dir: Path, reviewer: str, model: str | None, independent_review: bool = False) -> Path:
+def stage_external_review(out_dir: Path, reviewer: str, model: str | None,
+                          independent_review: bool = False,
+                          independent_only: bool = False) -> Path:
     """Run external review (mock, codex, or openai).
 
     For HIGH/CRITICAL findings, optionally trigger an independent adversarial
     Codex review to satisfy the independent policy-gate check.
+
+    independent_only=True runs ONLY the independent adversarial review and
+    never touches the canonical primary external-review.json (used when final
+    risk escalates to HIGH/CRITICAL after the primary review already ran).
     """
     packet = out_dir / "external-review-packet.json"
     review_path = out_dir / "external-review.json"
@@ -675,41 +698,42 @@ def stage_external_review(out_dir: Path, reviewer: str, model: str | None, indep
     head_sha = state.get("commit_sha", "")
     run_id = state.get("run_id") or out_dir.name
 
-    if reviewer == "mock":
-        mock_review = MOCK_REVIEW
-        env_path = os.environ.get("HERMES_MOCK_REVIEW")
-        if env_path and Path(env_path).is_file():
-            mock_review = _read_json(Path(env_path))
-        _write_json(review_path, mock_review)
-    elif reviewer == "codex":
-        args = ["--packet", str(packet), "--out", str(out_dir), "--timeout", "300"]
-        if model:
-            args.extend(["--model", model])
-        _run_script("codex_review.py", *args, timeout=600)
-    elif reviewer == "openai":
-        _run_script(
-            "openai_review.py",
-            "--packet", str(packet),
-            "--out", str(review_path),
-            "--mode", "openai-api",
-            "--model", model or "",
-        )
-    else:
-        raise ValueError(f"Unknown reviewer: {reviewer}")
+    if not independent_only:
+        if reviewer == "mock":
+            mock_review = MOCK_REVIEW
+            env_path = os.environ.get("HERMES_MOCK_REVIEW")
+            if env_path and Path(env_path).is_file():
+                mock_review = _read_json(Path(env_path))
+            _write_json(review_path, mock_review)
+        elif reviewer == "codex":
+            args = ["--packet", str(packet), "--out", str(out_dir), "--timeout", "300"]
+            if model:
+                args.extend(["--model", model])
+            _run_script("codex_review.py", *args, timeout=600)
+        elif reviewer == "openai":
+            _run_script(
+                "openai_review.py",
+                "--packet", str(packet),
+                "--out", str(review_path),
+                "--mode", "openai-api",
+                "--model", model or "",
+            )
+        else:
+            raise ValueError(f"Unknown reviewer: {reviewer}")
 
-    _save_state(out_dir, "EXTERNAL_REVIEW_RECEIVED", 50)
-    _update_artifact(out_dir, "external_review", review_path)
+        _save_state(out_dir, "EXTERNAL_REVIEW_RECEIVED", 50)
+        _update_artifact(out_dir, "external_review", review_path)
 
     # Independent adversarial review for HIGH/CRITICAL findings.
     # Default to true for real reviewers; must be explicit for mock.
-    if reviewer != "mock" or independent_review:
-        review = _read_json(review_path)
+    if independent_only or reviewer != "mock" or independent_review:
+        review = _read_json(review_path) if review_path.is_file() else {}
         findings = review.get("findings", [])
         high_or_critical = any(
             str(f.get("severity", "")).lower() in ("high", "critical")
             for f in findings
         )
-        if high_or_critical or independent_review:
+        if independent_only or high_or_critical or independent_review:
             indep_dir = out_dir / "independent-review"
             indep_dir.mkdir(parents=True, exist_ok=True)
             if reviewer == "codex":
@@ -1214,8 +1238,11 @@ def main() -> int:
         # 13. Final risk
         final_risk = stage_final_risk(out_dir)
         # Sensitive changed paths can escalate risk beyond primary review findings.
+        # Run ONLY the independent adversarial review — never overwrite the
+        # canonical primary external-review.json (CX-F6).
         if str(final_risk.get("final_risk", "")).upper() in ("HIGH", "CRITICAL"):
-            stage_external_review(out_dir, args.reviewer, reviewer_model, independent_review=True)
+            stage_external_review(out_dir, args.reviewer, reviewer_model,
+                                  independent_review=True, independent_only=True)
 
         # 14. Repair budget
         repair_budget = RepairBudget(
@@ -1237,7 +1264,8 @@ def main() -> int:
             stage_repair(out_dir, repair_budget)
             final_risk = stage_final_risk(out_dir)
             if str(final_risk.get("final_risk", "")).upper() in ("HIGH", "CRITICAL"):
-                stage_external_review(out_dir, args.reviewer, reviewer_model, independent_review=True)
+                stage_external_review(out_dir, args.reviewer, reviewer_model,
+                                      independent_review=True, independent_only=True)
             gate = stage_policy_gate(
                 out_dir,
                 attempts=repair_budget.attempts,
