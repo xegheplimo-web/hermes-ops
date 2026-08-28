@@ -23,6 +23,7 @@ import sys
 import time
 import uuid
 import shutil
+from urllib.parse import urlparse
 from pathlib import Path
 from typing import Any
 
@@ -118,6 +119,23 @@ def _load_state(out_dir: Path) -> dict:
         "branch": "",
         "stage_durations": {},
     }
+
+
+def _initialize_state(out_dir: Path, run_id: str, repo: Path) -> None:
+    """Create state from scratch; an output directory may contain old state."""
+    _write_json(out_dir / "state.json", {
+        "run_id": run_id,
+        "trace_id": run_id,
+        "status": "PREFLIGHT",
+        "progress": 0,
+        "repo": str(repo),
+        "commit_sha": "",
+        "branch": "",
+        "started_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "started_at_monotonic": time.monotonic(),
+        "stage_durations": {},
+        "artifacts": {},
+    })
 
 
 class RepairBudget:
@@ -218,11 +236,20 @@ def _repo_owner_name(state: dict) -> tuple[str, str]:
     )
     if remote.returncode != 0 or not remote.stdout.strip():
         raise ValueError("repository origin remote is unavailable")
-    value = remote.stdout.strip().removesuffix("/").removesuffix(".git")
-    match = re.search(r"(?:github\.com[:/]|gitlab\.com[:/]|bitbucket\.org[:/])([^/]+)/([^/]+)$", value)
-    if not match:
+    value = remote.stdout.strip()
+    if re.match(r"^[^@/:]+@[^:]+:.+$", value):
+        host, parsed_path = value.split("@", 1)[1].split(":", 1)
+        host = host.lower().rstrip(".")
+    else:
+        parsed = urlparse(value)
+        host = (parsed.hostname or "").lower().rstrip(".")
+        parsed_path = parsed.path
+    if host not in {"github.com", "gitlab.com", "bitbucket.org"}:
         raise ValueError(f"cannot establish repository identity from origin: {value!r}")
-    return _sanitize_repo_name(match.group(1)), _sanitize_repo_name(match.group(2))
+    parts = [part for part in parsed_path.strip("/").split("/") if part]
+    if len(parts) != 2 or not parts[0] or not parts[1]:
+        raise ValueError(f"cannot establish repository identity from origin: {value!r}")
+    return _sanitize_repo_name(parts[0]), _sanitize_repo_name(parts[1].removesuffix(".git"))
 
 
 def _manifest_ci(out_dir: Path) -> dict:
@@ -370,15 +397,20 @@ def _run_gate_binary(
     proc = subprocess.run(cmd + args, capture_output=True, text=True, timeout=120)
 
     parsed: dict = {}
+    output_valid = True
     if proc.stdout.strip():
         try:
             parsed = json.loads(proc.stdout)
+            output_valid = isinstance(parsed, dict)
         except json.JSONDecodeError:
+            output_valid = False
             parsed = {"raw_stdout": proc.stdout.strip()[:500]}
+    else:
+        output_valid = False
 
     decision = "BLOCK"
-    reason = "GATE_PROCESS_FAILED" if proc.returncode != 0 else "GATE_CONTRACT_INVALID"
-    if proc.returncode == 0 and isinstance(parsed, dict):
+    reason = "GATE_PROCESS_FAILED" if proc.returncode != 0 or not output_valid else "GATE_CONTRACT_INVALID"
+    if proc.returncode in (0, 1) and isinstance(parsed, dict):
         required = parsed.get("requiredGates")
         contract_ok = (
             parsed.get("decision") in ("pass", "fail")
@@ -389,9 +421,20 @@ def _run_gate_binary(
             and parsed.get("policyVersion") == "0.1.0"
             and isinstance(parsed.get("detail"), str)
         )
-        if contract_ok:
+        semantic_ok = (
+            (parsed.get("gate") == "PASS" and parsed.get("decision") == "pass"
+             and parsed.get("reasonCode") == "PASS")
+            or (parsed.get("gate") in {"REPAIR", "ESCALATE", "BLOCK"}
+                and parsed.get("decision") == "fail")
+        )
+        exit_ok = (proc.returncode == 0 and parsed.get("gate") == "PASS") or (
+            proc.returncode == 1 and parsed.get("gate") in {"REPAIR", "ESCALATE", "BLOCK"}
+        )
+        if contract_ok and semantic_ok and exit_ok:
             decision = str(parsed["gate"])
             reason = str(parsed["reasonCode"])
+        elif proc.returncode in (0, 1) and output_valid:
+            reason = "GATE_CONTRACT_INVALID"
     return {
         "decision": decision,
         "reason_code": reason,
@@ -456,9 +499,9 @@ def _validate_independent_review(out_dir: Path, state: dict) -> dict | None:
     packet = out_dir / "external-review-packet.json"
     if not packet.is_file() or review.get("packet_sha256") != _sha256_file(packet):
         return None
-    if not all(review.get(key) for key in ("reviewer_identity", "reviewer_provider", "reviewer_model")):
+    if not all(review.get(key) for key in ("reviewer_identity", "reviewer_provider", "reviewer_model", "invocation_id")):
         return None
-    if review.get("review_mode") != "adversarial":
+    if review.get("review_mode") != "adversarial" or review.get("packet_sha256") != _sha256_file(packet):
         return None
     return review
 
@@ -645,6 +688,7 @@ def stage_external_review(out_dir: Path, reviewer: str, model: str | None, indep
             "--packet", str(packet),
             "--out", str(out_dir),
             "--mode", "openai-api",
+            "--model", model or "",
         )
     else:
         raise ValueError(f"Unknown reviewer: {reviewer}")
@@ -661,7 +705,7 @@ def stage_external_review(out_dir: Path, reviewer: str, model: str | None, indep
             str(f.get("severity", "")).lower() in ("high", "critical")
             for f in findings
         )
-        if high_or_critical:
+        if high_or_critical or independent_review:
             indep_dir = out_dir / "independent-review"
             indep_dir.mkdir(parents=True, exist_ok=True)
             if reviewer == "codex":
@@ -678,6 +722,8 @@ def stage_external_review(out_dir: Path, reviewer: str, model: str | None, indep
                     "--packet", str(packet),
                     "--out", str(indep_dir),
                     "--mode", "openai-api",
+                    "--review-mode", "adversarial",
+                    "--model", model or "",
                 )
             else:
                 # Mock output is never independent evidence.
@@ -690,14 +736,11 @@ def stage_external_review(out_dir: Path, reviewer: str, model: str | None, indep
             dst = out_dir / "independent-review.json"
             if src.is_file():
                 indep = _read_json(src)
+                # Binding is orchestrator-owned; reviewer provenance must come
+                # from the adapter and is validated rather than self-asserted.
                 indep["trace_id"] = trace_id
                 indep["head_sha"] = head_sha
                 indep["run_id"] = run_id
-                indep["packet_sha256"] = _sha256_file(packet)
-                indep["reviewer_identity"] = f"{reviewer}:adversarial"
-                indep["reviewer_provider"] = reviewer
-                indep["reviewer_model"] = model or "unknown"
-                indep["review_mode"] = "adversarial"
                 _write_json(dst, indep)
                 _update_artifact(out_dir, "independent_review", dst)
 
@@ -1076,7 +1119,7 @@ def main() -> int:
     parser.add_argument("--skip-conflict-check", action="store_true",
                         help="Skip conflict detector (useful for fresh repos)")
     parser.add_argument("--policy-gate-dry-run", action="store_true",
-                        help="Use a synthetic PASS when the real policy gate binary is unavailable (must be explicit)")
+                        help="Explicitly allow dry-run policy-gate handling; it never grants a synthetic PASS")
     args = parser.parse_args()
 
     if args.policy_gate_dry_run and args.dispatch_mode != "dry-run":
@@ -1089,22 +1132,17 @@ def main() -> int:
     # Every invocation gets a fresh identity; output directories may be reused.
     run_id = f"{dt.datetime.now(dt.timezone.utc).strftime('%Y%m%dT%H%M%S')}-{uuid.uuid4().hex}"
     os.environ["HERMES_TRACE_ID"] = run_id
-    for artifact in ("independent-review.json", "policy-gate.json", "policy-manifest.json", "outcome.json", "repair-result.json"):
-        (out_dir / artifact).unlink(missing_ok=True)
-    shutil.rmtree(out_dir / "independent-review", ignore_errors=True)
+    ownership_marker = out_dir / ".hermes-owned"
+    if ownership_marker.is_file():
+        for artifact in ("independent-review.json", "policy-gate.json", "policy-manifest.json", "outcome.json", "repair-result.json"):
+            (out_dir / artifact).unlink(missing_ok=True)
+        independent_dir = out_dir / "independent-review"
+        if independent_dir.is_dir():
+            shutil.rmtree(independent_dir)
+    ownership_marker.write_text("hermes-open-design\n", encoding="ascii")
 
     # Initialize state
-    _save_state(
-        out_dir,
-        "PREFLIGHT",
-        0,
-        {
-            "repo": str(repo),
-            "trace_id": run_id,
-            "started_at": dt.datetime.now(dt.timezone.utc).isoformat(),
-            "started_at_monotonic": time.monotonic(),
-        },
-    )
+    _initialize_state(out_dir, run_id, repo)
 
     try:
         # 1. Evidence

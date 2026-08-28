@@ -7,6 +7,8 @@ import argparse
 import json
 import os
 import sys
+import hashlib
+import uuid
 from pathlib import Path
 
 try:
@@ -147,6 +149,12 @@ def main() -> int:
         default="openai-api",
         help="'openai-api' calls the API (default); 'chatgpt-human' prepares the prompt and exits",
     )
+    parser.add_argument(
+        "--review-mode",
+        choices=["primary", "adversarial"],
+        default="primary",
+        help="Provenance mode for this invocation.",
+    )
     args = parser.parse_args()
 
     try:
@@ -156,6 +164,8 @@ def main() -> int:
         return 1
 
     prompt = build_prompt(packet)
+    packet_sha256 = hashlib.sha256(Path(args.packet).read_bytes()).hexdigest()
+    invocation_id = uuid.uuid4().hex
 
     # chatgpt-human mode: prepare prompt only, skip API key and API call
     if args.mode == "chatgpt-human":
@@ -165,6 +175,12 @@ def main() -> int:
         print(json.dumps({
             "ok": True,
             "mode": "chatgpt-human",
+            "review_mode": args.review_mode,
+            "invocation_id": invocation_id,
+            "packet_sha256": packet_sha256,
+            "reviewer_identity": "openai-api",
+            "reviewer_provider": "openai",
+            "reviewer_model": args.model,
             "prompt": str(prompt_path),
             "message": "Prompt prepared. Submit it to ChatGPT manually, then save the result to the --out path.",
         }))
@@ -230,6 +246,12 @@ def main() -> int:
         return 1
 
     review["trace_id"] = args.trace_id
+    review["invocation_id"] = invocation_id
+    review["packet_sha256"] = packet_sha256
+    review["review_mode"] = args.review_mode
+    review["reviewer_identity"] = "openai-api"
+    review["reviewer_provider"] = "openai"
+    review["reviewer_model"] = args.model
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(review, indent=2, ensure_ascii=False), encoding="utf-8")

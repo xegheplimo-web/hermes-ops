@@ -117,7 +117,7 @@ if log_path:
         f.write(json.dumps(entry, sort_keys=True) + "\n")
 
 print(json.dumps(result, indent=2))
-sys.exit(0)
+sys.exit(0 if outcome == "PASS" else 1)
 '''
 
 
@@ -427,6 +427,17 @@ def test_gate_nonzero_pass_stdout_is_blocked():
     assert r.returncode == 1
     gate = _load_json(out / "policy-gate.json")
     assert gate["decision"] == "BLOCK"
+
+
+def test_gate_exit_zero_semantic_contradiction_is_blocked():
+    out = TMP / "gate-contradictory-pass"
+    fake = TMP / "contradictory_gate.py"
+    fake.write_text("import json; print(json.dumps({'decision':'fail','gate':'PASS','reasonCode':'PASS','riskLevel':'LOW','requiredGates':[],'policyVersion':'0.1.0','detail':'contradiction'}))\n", encoding="utf-8")
+    r = _run(out, ["--reviewer", "mock", "--skip-conflict-check"], {"HERMES_GATE_BIN": str(fake)})
+    assert r.returncode == 1
+    gate = _load_json(out / "policy-gate.json")
+    assert gate["decision"] == "BLOCK"
+    assert gate["reason_code"] == "GATE_CONTRACT_INVALID"
 
 
 def test_real_gate_unknown_ci_cannot_pass():
