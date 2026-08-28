@@ -13,6 +13,7 @@ CLI:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -20,6 +21,7 @@ import shutil
 import subprocess
 import sys
 import time
+import uuid
 from pathlib import Path
 
 try:
@@ -1063,6 +1065,15 @@ def main(argv: list[str] | None = None) -> int:
 
     # ── Write external-review.json (same schema as openai_review.py) ────
     review["trace_id"] = args.trace_id
+    if args.packet:
+        review["packet_sha256"] = hashlib.sha256(Path(args.packet).read_bytes()).hexdigest()
+    else:
+        review["packet_sha256"] = ""
+    review["invocation_id"] = uuid.uuid4().hex
+    review["review_mode"] = "adversarial" if args.mode == "adversarial" else "primary"
+    review["reviewer_identity"] = "codex"
+    review["reviewer_provider"] = "codex"
+    review["reviewer_model"] = args.model or "codex-cli"
     review_path = out_dir / "external-review.json"
     review_path.write_text(
         json.dumps(review, indent=2, ensure_ascii=False),

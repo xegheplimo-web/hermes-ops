@@ -103,8 +103,12 @@ def validate_review(review: dict) -> list[str]:
     return errors
 
 
-def build_prompt(packet: dict) -> str:
-    """Build the review prompt from a review packet."""
+def build_prompt(packet: dict, review_mode: str = "primary") -> str:
+    """Build the review prompt from a review packet.
+
+    review_mode="adversarial" adds explicit adversarial pressure-testing
+    instructions (used for the independent HIGH/CRITICAL review).
+    """
     evidence = packet.get("repository_snapshot", {})
     analysis = packet.get("hermes_analysis", "")
 
@@ -131,6 +135,17 @@ Review independently for: wrong architectural assumptions, incomplete implementa
 Every finding must contain: id, title, severity (low/medium/high/critical), confidence (0-1), claim, evidence_refs, challenge_to_hermes, recommendation, verification.
 
 Explicitly identify cases where Hermes is wrong."""
+    if review_mode == "adversarial":
+        prompt += """
+
+## ADVERSARIAL MODE (independent review)
+You are the independent adversarial reviewer for a HIGH/CRITICAL-risk change.
+Your output is the ONLY independent evidence the policy gate may accept for this run.
+- Actively hunt for silent-bypass paths, fail-open conditions, fabricated evidence, stale/self-attested provenance, and scope violations.
+- Challenge every Hermes claim: for each, state whether it is FACT (evidence-backed), INFERENCE, or UNKNOWN.
+- If you find nothing wrong, list exactly which acceptance criteria and evidence artifacts you checked and why they hold — never answer "looks good" without that.
+- Do not edit, commit, or approve anything. You are read-only and advisory."""
+    return prompt
 
 
 def main() -> int:
@@ -163,7 +178,7 @@ def main() -> int:
         print(json.dumps({"ok": False, "error": str(exc)}), file=sys.stderr)
         return 1
 
-    prompt = build_prompt(packet)
+    prompt = build_prompt(packet, args.review_mode)
     packet_sha256 = hashlib.sha256(Path(args.packet).read_bytes()).hexdigest()
     invocation_id = uuid.uuid4().hex
 

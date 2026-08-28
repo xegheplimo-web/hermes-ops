@@ -412,14 +412,18 @@ def _run_gate_binary(
     reason = "GATE_PROCESS_FAILED" if proc.returncode != 0 or not output_valid else "GATE_CONTRACT_INVALID"
     if proc.returncode in (0, 1) and isinstance(parsed, dict):
         required = parsed.get("requiredGates")
+        risk_level = parsed.get("riskLevel")
+        reason_code = parsed.get("reasonCode")
+        detail = parsed.get("detail")
         contract_ok = (
             parsed.get("decision") in ("pass", "fail")
             and parsed.get("gate") in {"PASS", "REPAIR", "ESCALATE", "BLOCK"}
-            and isinstance(parsed.get("reasonCode"), str)
-            and isinstance(parsed.get("riskLevel"), str)
-            and isinstance(required, list)
+            and isinstance(reason_code, str) and reason_code.strip()
+            and risk_level in {"LOW", "MEDIUM", "HIGH", "CRITICAL"}
+            and isinstance(required, list) and len(required) > 0
+            and all(isinstance(g, str) and g.strip() for g in required)
             and parsed.get("policyVersion") == "0.1.0"
-            and isinstance(parsed.get("detail"), str)
+            and isinstance(detail, str) and detail.strip()
         )
         semantic_ok = (
             (parsed.get("gate") == "PASS" and parsed.get("decision") == "pass"
@@ -686,7 +690,7 @@ def stage_external_review(out_dir: Path, reviewer: str, model: str | None, indep
         _run_script(
             "openai_review.py",
             "--packet", str(packet),
-            "--out", str(out_dir),
+            "--out", str(review_path),
             "--mode", "openai-api",
             "--model", model or "",
         )
@@ -720,7 +724,7 @@ def stage_external_review(out_dir: Path, reviewer: str, model: str | None, indep
                 _run_script(
                     "openai_review.py",
                     "--packet", str(packet),
-                    "--out", str(indep_dir),
+                    "--out", str(indep_dir / "external-review.json"),
                     "--mode", "openai-api",
                     "--review-mode", "adversarial",
                     "--model", model or "",
