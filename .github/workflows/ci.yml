@@ -112,7 +112,9 @@ jobs:
         run: |
           set -euo pipefail
           fail=0
-          for f in skills/software-development/project-review-orchestrator/tests/test_*.py; do
+          for f in skills/software-development/project-review-orchestrator/tests/test_*.py \
+                   skills/software-development/project-review-orchestrator/scripts/test_final_risk.py; do
+            [ -f "$f" ] || continue
             case "$(basename "$f")" in
               test_approval.py) continue ;;   # needs Ops DB, runs in the next step
             esac

@@ -44,6 +44,7 @@ subprocess.run(["git", "config", "user.name", "Test"], cwd=REPO, capture_output=
 
 subprocess.run(["git", "add", "-A"], cwd=REPO, capture_output=True)
 subprocess.run(["git", "commit", "-m", "initial"], cwd=REPO, capture_output=True)
+subprocess.run(["git", "remote", "add", "origin", "https://github.com/test-owner/test-repo.git"], cwd=REPO, capture_output=True)
 
 SCRIPT = Path(__file__).resolve().parent.parent / "scripts" / "open_design.py"
 OUT = TMP / "open-design-run"
@@ -116,7 +117,7 @@ if log_path:
         f.write(json.dumps(entry, sort_keys=True) + "\n")
 
 print(json.dumps(result, indent=2))
-sys.exit(0 if outcome == "PASS" else 1)
+sys.exit(0)
 '''
 
 
@@ -332,15 +333,13 @@ def test_high_critical_with_independent():
         "HERMES_MOCK_REVIEW": str(mock_review),
     }
     r = _run(out, ["--reviewer", "mock", "--skip-conflict-check", "--independent-review"], env)
-    assert r.returncode == 0, f"stdout: {r.stdout[:500]}\nstderr: {r.stderr[:500]}"
+    assert r.returncode == 1, f"stdout: {r.stdout[:500]}\nstderr: {r.stderr[:500]}"
     gate = _load_json(out / "policy-gate.json")
-    assert gate["decision"] == "PASS", gate
-    indep = _load_json(out / "independent-review.json")
-    state = _load_json(out / "state.json")
-    assert indep["head_sha"] == state["commit_sha"]
-    assert indep["trace_id"] == state["trace_id"]
-    invocations = log.read_text(encoding="utf-8").strip().splitlines()
-    assert len(invocations) == 1, invocations
+    assert gate["decision"] == "BLOCK", gate
+    assert gate["reason_code"] == "INDEPENDENT_REVIEW_INVALID", gate
+    assert not (out / "independent-review.json").is_file()
+    invocations = log.read_text(encoding="utf-8").strip().splitlines() if log.is_file() else []
+    assert len(invocations) == 0, invocations
 
 
 def test_invalid_risk_evidence_blocks():
@@ -418,6 +417,34 @@ def test_gate_invocation_error_fail_closed():
     gate = _load_json(out / "policy-gate.json")
     assert state["status"] == "POLICY_BLOCK", state
     assert gate["decision"] == "BLOCK", gate
+
+
+def test_gate_nonzero_pass_stdout_is_blocked():
+    out = TMP / "gate-nonzero-pass"
+    fake = TMP / "pass_then_error.py"
+    fake.write_text("import json, sys; print(json.dumps({'decision':'pass','gate':'PASS','reasonCode':'PASS','riskLevel':'LOW','requiredGates':[],'policyVersion':'0.1.0','detail':'fake'})); sys.exit(1)\n", encoding="utf-8")
+    r = _run(out, ["--reviewer", "mock", "--skip-conflict-check"], {"HERMES_GATE_BIN": str(fake)})
+    assert r.returncode == 1
+    gate = _load_json(out / "policy-gate.json")
+    assert gate["decision"] == "BLOCK"
+
+
+def test_real_gate_unknown_ci_cannot_pass():
+    out = TMP / "real-gate-unknown-ci"
+    r = _run(out, ["--reviewer", "mock", "--skip-conflict-check"], {"HERMES_GATE_BIN": ""})
+    assert r.returncode == 1, f"stdout: {r.stdout[:500]}\nstderr: {r.stderr[:500]}"
+    gate = _load_json(out / "policy-gate.json")
+    assert gate["decision"] != "PASS", gate
+
+
+def test_policy_gate_dry_run_rejects_real_dispatch():
+    r = subprocess.run(
+        [sys.executable, str(SCRIPT), "--repo", str(REPO), "--out", str(TMP / "dry-dispatch"),
+         "--dispatch-mode", "dispatch", "--policy-gate-dry-run"],
+        capture_output=True, text=True, timeout=10,
+    )
+    assert r.returncode == 2
+    assert "requires --dispatch-mode dry-run" in r.stderr
 
 
 def main():
