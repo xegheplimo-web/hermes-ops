@@ -144,7 +144,7 @@ def validate_review(review: dict) -> list[str]:
 
     for key in ("executive_summary", "architecture_assessment"):
         value = review.get(key)
-        if value is not None and not (isinstance(value, str) and value.strip()):
+        if not (isinstance(value, str) and value.strip()):
             errors.append(f"'{key}' must be a non-empty string")
 
     # Findings structure
@@ -161,10 +161,10 @@ def validate_review(review: dict) -> list[str]:
                     errors.append(f"findings[{i}] missing required key: {key}")
             for key in ("id", "title", "claim", "challenge_to_hermes", "recommendation", "verification"):
                 value = finding.get(key)
-                if value is not None and not (isinstance(value, str) and value.strip()):
+                if not (isinstance(value, str) and value.strip()):
                     errors.append(f"findings[{i}].{key} must be a non-empty string")
             sev = finding.get("severity")
-            if sev not in VALID_SEVERITIES:
+            if not isinstance(sev, str) or sev not in VALID_SEVERITIES:
                 errors.append(f"findings[{i}].severity '{sev}' not in {sorted(VALID_SEVERITIES)}")
             conf = finding.get("confidence")
             if isinstance(conf, bool) or not isinstance(conf, (int, float)) or not (0.0 <= conf <= 1.0):
@@ -178,11 +178,11 @@ def validate_review(review: dict) -> list[str]:
             if unexpected:
                 errors.append(f"findings[{i}] unexpected keys: {sorted(unexpected)}")
 
-    # missing_evidence / priority_order: arrays of strings
+    # missing_evidence / priority_order: arrays of strings (null/absent-invalid)
     for key in ("missing_evidence", "priority_order"):
         value = review.get(key)
-        if value is not None and (
-            not isinstance(value, list) or not all(isinstance(e, str) for e in value)
+        if not (
+            isinstance(value, list) and all(isinstance(e, str) for e in value)
         ):
             errors.append(f"'{key}' must be an array of strings")
 
