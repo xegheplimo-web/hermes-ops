@@ -13,6 +13,7 @@ CLI:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -20,6 +21,7 @@ import shutil
 import subprocess
 import sys
 import time
+import uuid
 from pathlib import Path
 
 try:
@@ -124,6 +126,10 @@ DEFAULT_PROMPT_TEMPLATE = _SKILL_DIR / "templates" / "external-review-prompt.md"
 def validate_review(review: dict) -> list[str]:
     """Validate a parsed review against REVIEW_SCHEMA constraints.
 
+    Enforces the FULL schema: required keys, exact types (including items),
+    non-empty substantive strings, confidence range excluding booleans,
+    evidence_refs item types, and no unexpected properties (CX-F7).
+
     Returns a list of validation error messages (empty list = valid).
     """
     errors: list[str] = []
@@ -131,12 +137,17 @@ def validate_review(review: dict) -> list[str]:
     if not isinstance(review, dict):
         return ["response is not a JSON object"]
 
-    # Check top-level required keys
+    # Top-level required keys
     for key in TOP_LEVEL_REQUIRED:
         if key not in review:
             errors.append(f"missing top-level required key: {key}")
 
-    # Check findings structure
+    for key in ("executive_summary", "architecture_assessment"):
+        value = review.get(key)
+        if not (isinstance(value, str) and value.strip()):
+            errors.append(f"'{key}' must be a non-empty string")
+
+    # Findings structure
     findings = review.get("findings", [])
     if not isinstance(findings, list):
         errors.append("'findings' must be an array")
@@ -148,22 +159,37 @@ def validate_review(review: dict) -> list[str]:
             for key in FINDING_REQUIRED:
                 if key not in finding:
                     errors.append(f"findings[{i}] missing required key: {key}")
+            for key in ("id", "title", "claim", "challenge_to_hermes", "recommendation", "verification"):
+                value = finding.get(key)
+                if not (isinstance(value, str) and value.strip()):
+                    errors.append(f"findings[{i}].{key} must be a non-empty string")
             sev = finding.get("severity")
-            if sev is not None and sev not in VALID_SEVERITIES:
-                errors.append(
-                    f"findings[{i}].severity '{sev}' not in {sorted(VALID_SEVERITIES)}"
-                )
+            if not isinstance(sev, str) or sev not in VALID_SEVERITIES:
+                errors.append(f"findings[{i}].severity '{sev}' not in {sorted(VALID_SEVERITIES)}")
             conf = finding.get("confidence")
-            if conf is not None and not isinstance(conf, (int, float)):
-                errors.append(f"findings[{i}].confidence must be a number")
+            if isinstance(conf, bool) or not isinstance(conf, (int, float)) or not (0.0 <= conf <= 1.0):
+                errors.append(f"findings[{i}].confidence must be a number in [0, 1]")
+            evidence = finding.get("evidence_refs")
+            if not isinstance(evidence, list) or not all(
+                isinstance(e, str) and e.strip() for e in evidence
+            ):
+                errors.append(f"findings[{i}].evidence_refs must be a list of non-empty strings")
+            unexpected = set(finding) - set(FINDING_REQUIRED)
+            if unexpected:
+                errors.append(f"findings[{i}] unexpected keys: {sorted(unexpected)}")
 
-    # Check missing_evidence is a list
-    if "missing_evidence" in review and not isinstance(review["missing_evidence"], list):
-        errors.append("'missing_evidence' must be an array")
+    # missing_evidence / priority_order: arrays of strings (null/absent-invalid)
+    for key in ("missing_evidence", "priority_order"):
+        value = review.get(key)
+        if not (
+            isinstance(value, list) and all(isinstance(e, str) for e in value)
+        ):
+            errors.append(f"'{key}' must be an array of strings")
 
-    # Check priority_order is a list
-    if "priority_order" in review and not isinstance(review["priority_order"], list):
-        errors.append("'priority_order' must be an array")
+    # No unexpected top-level properties (additionalProperties: False)
+    unexpected = set(review) - set(TOP_LEVEL_REQUIRED)
+    if unexpected:
+        errors.append(f"unexpected top-level keys: {sorted(unexpected)}")
 
     return errors
 
@@ -910,6 +936,9 @@ def main(argv: list[str] | None = None) -> int:
             "--out",
             str(out_dir / "external-review.json"),
         ]
+        if args.mode == "adversarial":
+            cmd.extend(["--review-mode", "adversarial"])   # CX-F9
+        cmd.extend(["--trace-id", args.trace_id])
         if args.model:
             cmd.extend(["--model", args.model])
 
@@ -938,6 +967,7 @@ def main(argv: list[str] | None = None) -> int:
 
     # ── Load review packet ──────────────────────────────────────────────
     packet: dict | None = None
+    packet_sha256 = ""
     if args.packet:
         packet_path = Path(args.packet)
         if not packet_path.exists():
@@ -947,7 +977,10 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 1
         try:
-            packet = json.loads(packet_path.read_text(encoding="utf-8"))
+            # Read bytes ONCE: digest the exact bytes the reviewer is fed (CX-F8).
+            packet_bytes = packet_path.read_bytes()
+            packet_sha256 = hashlib.sha256(packet_bytes).hexdigest()
+            packet = json.loads(packet_bytes)
         except (OSError, json.JSONDecodeError) as exc:
             print(
                 json.dumps({"ok": False, "error": f"Failed to load packet: {exc}"}),
@@ -1054,15 +1087,24 @@ def main(argv: list[str] | None = None) -> int:
     # ── Validate ────────────────────────────────────────────────────────
     validation_errors = validate_review(review)
     if validation_errors:
-        # Log validation issues but still save the parsed result
-        validation_path = out_dir / "codex-validation-errors.json"
-        validation_path.write_text(
-            json.dumps(validation_errors, indent=2, ensure_ascii=False),
-            encoding="utf-8",
+        # Fail closed: never publish malformed review evidence (CX-F7).
+        print(
+            json.dumps({
+                "ok": False,
+                "error": f"Review response validation failed: {'; '.join(validation_errors)}",
+            }),
+            file=sys.stderr,
         )
+        return 1
 
     # ── Write external-review.json (same schema as openai_review.py) ────
     review["trace_id"] = args.trace_id
+    review["packet_sha256"] = packet_sha256
+    review["invocation_id"] = uuid.uuid4().hex
+    review["review_mode"] = "adversarial" if args.mode == "adversarial" else "primary"
+    review["reviewer_identity"] = "codex"
+    review["reviewer_provider"] = "codex"
+    review["reviewer_model"] = args.model or "codex-cli"
     review_path = out_dir / "external-review.json"
     review_path.write_text(
         json.dumps(review, indent=2, ensure_ascii=False),

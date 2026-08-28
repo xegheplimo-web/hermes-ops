@@ -14,12 +14,16 @@ from __future__ import annotations
 
 import argparse
 import datetime as dt
+import hashlib
 import json
 import os
-import shutil
+import re
 import subprocess
 import sys
 import time
+import uuid
+import shutil
+from urllib.parse import urlparse
 from pathlib import Path
 from typing import Any
 
@@ -38,6 +42,12 @@ try:
     _HAS_RESOLVER = True
 except ImportError:
     _HAS_RESOLVER = False
+
+try:
+    from policy_gate import find_gate_binary
+    _HAS_GATE_DISCOVERY = True
+except ImportError:
+    _HAS_GATE_DISCOVERY = False
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Helpers
@@ -109,6 +119,23 @@ def _load_state(out_dir: Path) -> dict:
         "branch": "",
         "stage_durations": {},
     }
+
+
+def _initialize_state(out_dir: Path, run_id: str, repo: Path) -> None:
+    """Create state from scratch; an output directory may contain old state."""
+    _write_json(out_dir / "state.json", {
+        "run_id": run_id,
+        "trace_id": run_id,
+        "status": "PREFLIGHT",
+        "progress": 0,
+        "repo": str(repo),
+        "commit_sha": "",
+        "branch": "",
+        "started_at": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "started_at_monotonic": time.monotonic(),
+        "stage_durations": {},
+        "artifacts": {},
+    })
 
 
 class RepairBudget:
@@ -184,6 +211,347 @@ def _update_artifact(out_dir: Path, key: str, path: Path) -> None:
     _write_json(out_dir / "state.json", state)
 
 
+def _sha256_file(path: Path) -> str:
+    """Return the SHA-256 hex digest of a file's contents."""
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _valid_risk(risk: Any) -> bool:
+    """Return True if ``risk`` is one of the four canonical Hermes risk levels."""
+    return isinstance(risk, str) and risk.upper() in {"LOW", "MEDIUM", "HIGH", "CRITICAL"}
+
+
+def _sanitize_repo_name(name: str) -> str:
+    """Sanitize a repository owner/name for the evidence manifest."""
+    cleaned = re.sub(r"[^A-Za-z0-9._-]", "_", name).strip("._-")[:100]
+    return cleaned or "repo"
+
+
+def _repo_owner_name(state: dict) -> tuple[str, str]:
+    """Derive repository identity from the verified origin remote."""
+    repo = Path(str(state.get("repo", "."))).resolve()
+    remote = subprocess.run(
+        ["git", "-C", str(repo), "remote", "get-url", "origin"],
+        capture_output=True, text=True, check=False,
+    )
+    if remote.returncode != 0 or not remote.stdout.strip():
+        raise ValueError("repository origin remote is unavailable")
+    value = remote.stdout.strip()
+    if re.match(r"^[^@/:]+@[^:]+:.+$", value):
+        host, parsed_path = value.split("@", 1)[1].split(":", 1)
+        host = host.lower().rstrip(".")
+    else:
+        parsed = urlparse(value)
+        host = (parsed.hostname or "").lower().rstrip(".")
+        parsed_path = parsed.path
+    if host not in {"github.com", "gitlab.com", "bitbucket.org"}:
+        raise ValueError(f"cannot establish repository identity from origin: {value!r}")
+    parts = [part for part in parsed_path.strip("/").split("/") if part]
+    if len(parts) != 2 or not parts[0] or not parts[1]:
+        raise ValueError(f"cannot establish repository identity from origin: {value!r}")
+    return _sanitize_repo_name(parts[0]), _sanitize_repo_name(parts[1].removesuffix(".git"))
+
+
+def _manifest_ci(out_dir: Path) -> dict:
+    """Build the ``ci`` block of the evidence manifest from collected findings.
+
+    CI success is never fabricated: an unknown/mock/absent CI status is mapped
+    to ``failure`` so the gate cannot pass on unverified evidence.
+    """
+    ci = _read_json_optional(out_dir / "ci-findings.json", {})
+    status = str(ci.get("ci_status", "") or "").lower()
+    valid = {"success", "failure", "neutral", "cancelled", "skipped", "timed_out", "action_required"}
+    conclusion = status if status in valid else "failure"
+
+    # A green conclusion requires an explicit flag or a checks list where every
+    # check is success/neutral/skipped.
+    if conclusion == "success" and ci.get("ci_green") is not True:
+        checks = ci.get("checks")
+        if isinstance(checks, list) and checks:
+            bad = [c for c in checks if c.get("conclusion") not in ("success", "neutral", "skipped")]
+            if bad:
+                conclusion = "failure"
+        else:
+            conclusion = "failure"
+
+    return {"conclusion": conclusion}
+
+
+def _git_output(repo: Path, *args: str) -> str:
+    proc = subprocess.run(["git", "-C", str(repo), *args], capture_output=True, text=True, check=False)
+    if proc.returncode != 0:
+        raise ValueError(proc.stderr.strip() or f"git {' '.join(args)} failed")
+    return proc.stdout.strip()
+
+
+def _actual_changed_files(out_dir: Path, head_sha: str | None = None) -> list[str]:
+    state = _load_state(out_dir)
+    repo = Path(str(state.get("repo", "."))).resolve()
+    head = head_sha or _git_output(repo, "rev-parse", "HEAD")
+    base = state.get("base_sha") or os.environ.get("HERMES_BASE_SHA")
+    if not base:
+        try:
+            base = _git_output(repo, "merge-base", head, "origin/main")
+        except ValueError:
+            parents = _git_output(repo, "rev-list", "--parents", "-n", "1", head).split()
+            base = parents[1] if len(parents) > 1 else head
+    raw = _git_output(repo, "diff", "--name-only", "--diff-filter=ACDMRTUXB", f"{base}..{head}")
+    return [p for p in raw.splitlines() if p]
+
+
+def _changed_files(out_dir: Path, head_sha: str | None = None) -> list[str]:
+    """Collect actual base-to-head paths; task scope is only a consistency check."""
+    changed = _actual_changed_files(out_dir, head_sha)
+    plan = _read_json_optional(out_dir / "task-plan.json", {})
+    declared: set[str] = set()
+    for t in plan.get("tasks", []):
+        for p in (t.get("write_scope") or t.get("scope") or []):
+            if isinstance(p, str):
+                declared.add(p)
+    undeclared = [p for p in changed if p not in declared]
+    if undeclared:
+        raise ValueError(f"undeclared changed files: {', '.join(undeclared)}")
+    return changed
+
+
+def _build_manifest(out_dir: Path, state: dict, risk_level: str, changed_files: list[str]) -> dict:
+    """Build a canonical EvidenceManifest v1 for the policy gate."""
+    head_sha = state.get("commit_sha", "")
+    if not re.match(r"^[0-9a-f]{40}$", head_sha):
+        raise ValueError(f"commit_sha is not a 40-char lowercase hex SHA: {head_sha!r}")
+
+    owner, name = _repo_owner_name(state)
+    timestamp = state.get("evidence_generated_at") or state.get("created_at")
+    if not timestamp:
+        raise ValueError("evidence producer timestamp is missing")
+
+    artifacts: list[dict[str, str]] = []
+    for label, path in (
+        ("final-risk.json", out_dir / "final-risk.json"),
+        ("task-plan.json", out_dir / "task-plan.json"),
+    ):
+        if path.is_file():
+            artifacts.append({"path": label, "sha256": _sha256_file(path)})
+    if not artifacts:
+        raise ValueError("no policy evidence artifacts available")
+
+    return {
+        "schemaVersion": 1,
+        "repository": {"owner": owner, "name": name},
+        "headSha": head_sha,
+        "policyVersion": "0.1.0",
+        "timestamp": timestamp,
+        "artifacts": artifacts,
+        "ci": _manifest_ci(out_dir),
+        "source": {"kind": "local", "version": "0.1.0"},
+    }
+
+
+def _resolve_gate_binary() -> Path | None:
+    """Locate the hermes-policy-gate binary, honouring a test override."""
+    env_bin = os.environ.get("HERMES_GATE_BIN")
+    if env_bin:
+        env_path = Path(env_bin).resolve()
+        if env_path.is_file():
+            return env_path
+    if _HAS_GATE_DISCOVERY:
+        found = find_gate_binary()
+        if found:
+            return found
+    repo_root = SKILL_DIR.parents[2]
+    candidate = repo_root / "packages" / "gate" / "dist" / "bin.js"
+    return candidate if candidate.is_file() else None
+
+
+def _run_gate_binary(
+    binary: Path,
+    manifest_path: Path,
+    head_sha: str,
+    risk_level: str,
+    changed_files: list[str],
+    attempts: int,
+    max_attempts: int,
+    approval: dict | None = None,
+) -> dict:
+    """Invoke the policy-gate binary with the complete documented CLI vector."""
+    if binary.suffix in (".js", ".mjs") or binary.name == "bin.js":
+        cmd = ["node", str(binary)]
+    elif binary.suffix == ".py":
+        cmd = [sys.executable, str(binary)]
+    else:
+        cmd = [str(binary)]
+
+    args = [
+        "--manifest", str(manifest_path),
+        "--head-sha", head_sha,
+        "--policy-version", "0.1.0",
+        "--risk", risk_level,
+        "--attempts", str(attempts),
+        "--max-attempts", str(max_attempts),
+    ]
+    if changed_files:
+        args.extend(["--changed-files", ",".join(changed_files)])
+    if approval:
+        args.extend(["--approval", json.dumps(approval)])
+
+    proc = subprocess.run(cmd + args, capture_output=True, text=True, timeout=120)
+
+    parsed: dict = {}
+    output_valid = True
+    if proc.stdout.strip():
+        try:
+            parsed = json.loads(proc.stdout)
+            output_valid = isinstance(parsed, dict)
+        except json.JSONDecodeError:
+            output_valid = False
+            parsed = {"raw_stdout": proc.stdout.strip()[:500]}
+    else:
+        output_valid = False
+
+    decision = "BLOCK"
+    reason = "GATE_PROCESS_FAILED" if proc.returncode != 0 or not output_valid else "GATE_CONTRACT_INVALID"
+    if proc.returncode in (0, 1) and isinstance(parsed, dict):
+        required = parsed.get("requiredGates")
+        parsed_risk = parsed.get("riskLevel")
+        reason_code = parsed.get("reasonCode")
+        detail = parsed.get("detail")
+        contract_ok = (
+            parsed.get("decision") in ("pass", "fail")
+            and parsed.get("gate") in {"PASS", "REPAIR", "ESCALATE", "BLOCK"}
+            and isinstance(reason_code, str) and reason_code.strip()
+            and parsed_risk in {"LOW", "MEDIUM", "HIGH", "CRITICAL"}
+            and parsed_risk == risk_level
+            and isinstance(required, list) and len(required) > 0
+            and all(isinstance(g, str) and g.strip() for g in required)
+            and parsed.get("policyVersion") == "0.1.0"
+            and isinstance(detail, str) and detail.strip()
+        )
+        semantic_ok = (
+            (parsed.get("gate") == "PASS" and parsed.get("decision") == "pass"
+             and parsed.get("reasonCode") == "PASS")
+            or (parsed.get("gate") in {"REPAIR", "ESCALATE", "BLOCK"}
+                and parsed.get("decision") == "fail")
+        )
+        exit_ok = (proc.returncode == 0 and parsed.get("gate") == "PASS") or (
+            proc.returncode == 1 and parsed.get("gate") in {"REPAIR", "ESCALATE", "BLOCK"}
+        )
+        if contract_ok and semantic_ok and exit_ok:
+            decision = str(parsed["gate"])
+            reason = str(parsed["reasonCode"])
+        elif proc.returncode in (0, 1) and output_valid:
+            reason = "GATE_CONTRACT_INVALID"
+    return {
+        "decision": decision,
+        "reason_code": reason,
+        "risk_level": str(parsed.get("riskLevel", risk_level)),
+        "required_gates": parsed.get("requiredGates"),
+        "detail": str(parsed.get("detail", proc.stderr[:500] or "gate returned non-pass")),
+        "raw": parsed,
+    }
+
+
+_INDEPENDENT_REVIEW_REQUIRED = [
+    "executive_summary",
+    "architecture_assessment",
+    "findings",
+    "missing_evidence",
+    "priority_order",
+]
+
+_INDEPENDENT_FINDING_REQUIRED = [
+    "id", "title", "severity", "confidence", "claim",
+    "evidence_refs", "challenge_to_hermes", "recommendation", "verification",
+]
+
+_VALID_INDEPENDENT_SEVERITIES = {"low", "medium", "high", "critical"}
+
+
+def _validate_independent_review(out_dir: Path, state: dict) -> dict | None:
+    """Validate independent-review.json for HIGH/CRITICAL runs.
+
+    Checks that the file parses, contains the expected schema fields, and is
+    bound to the current run and head SHA (not merely a stale file on disk).
+    """
+    path = out_dir / "independent-review.json"
+    if not path.is_file():
+        return None
+    try:
+        review = _read_json(path)
+    except (OSError, json.JSONDecodeError):
+        return None
+    if not isinstance(review, dict):
+        return None
+    for key in _INDEPENDENT_REVIEW_REQUIRED:
+        if key not in review:
+            return None
+    findings = review.get("findings")
+    if not isinstance(findings, list):
+        return None
+    for f in findings:
+        if not isinstance(f, dict):
+            return None
+        for key in _INDEPENDENT_FINDING_REQUIRED:
+            if key not in f:
+                return None
+        if f.get("severity") not in _VALID_INDEPENDENT_SEVERITIES:
+            return None
+        conf = f.get("confidence")
+        if not isinstance(conf, (int, float)) or not (0.0 <= conf <= 1.0):
+            return None
+        if not (isinstance(f.get("claim"), str) and f["claim"].strip()):
+            return None
+        if not isinstance(f.get("evidence_refs"), list) or not all(
+            isinstance(e, str) and e.strip() for e in f["evidence_refs"]
+        ):
+            return None
+    # Substantive fields must be correctly typed and non-empty (CX-F7).
+    for key in ("missing_evidence", "priority_order"):
+        value = review.get(key)
+        if not isinstance(value, list):
+            return None
+    if not (isinstance(review.get("executive_summary"), str) and review["executive_summary"].strip()):
+        return None
+
+    trace_id = state.get("trace_id") or out_dir.name
+    if review.get("trace_id") != trace_id:
+        return None
+    if review.get("head_sha") != state.get("commit_sha"):
+        return None
+    packet = out_dir / "external-review-packet.json"
+    if not packet.is_file() or review.get("packet_sha256") != _sha256_file(packet):
+        return None
+    if not all(review.get(key) for key in ("reviewer_identity", "reviewer_provider", "reviewer_model", "invocation_id")):
+        return None
+    if review.get("review_mode") != "adversarial" or review.get("packet_sha256") != _sha256_file(packet):
+        return None
+    return review
+
+
+def _set_gate_result(
+    out_dir: Path,
+    decision: str,
+    detail: str,
+    reason_code: str,
+    final_risk: dict,
+    extra: dict | None = None,
+) -> dict:
+    """Persist a terminal gate decision to policy-gate.json and state.json."""
+    result: dict[str, Any] = {
+        "decision": decision,
+        "gate": decision,
+        "reason": detail,
+        "reason_code": reason_code,
+        "risk_level": (final_risk.get("final_risk", "") or "").upper(),
+        "final_risk": final_risk,
+    }
+    if extra:
+        result.update(extra)
+    _write_json(out_dir / "policy-gate.json", result)
+    _save_state(out_dir, f"POLICY_{decision}", 95, result)
+    _update_artifact(out_dir, "policy_gate", out_dir / "policy-gate.json")
+    return result
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # Mock external review (deterministic, for dry-runs)
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -228,6 +596,7 @@ def stage_evidence(repo: Path, out_dir: Path) -> dict:
             "repo": str(repo),
             "commit_sha": result.get("commit"),
             "branch": result.get("branch"),
+            "evidence_generated_at": _read_json(out_dir / "repo-evidence.json").get("generated_at"),
         },
     )
     _update_artifact(out_dir, "repo_evidence", out_dir / "repo-evidence.json")
@@ -308,45 +677,63 @@ def stage_strategy_and_classify(out_dir: Path) -> dict:
     return {"classified": classified}
 
 
-def stage_external_review(out_dir: Path, reviewer: str, model: str | None, independent_review: bool = False) -> Path:
+def stage_external_review(out_dir: Path, reviewer: str, model: str | None,
+                          independent_review: bool = False,
+                          independent_only: bool = False) -> Path:
     """Run external review (mock, codex, or openai).
 
     For HIGH/CRITICAL findings, optionally trigger an independent adversarial
     Codex review to satisfy the independent policy-gate check.
+
+    independent_only=True runs ONLY the independent adversarial review and
+    never touches the canonical primary external-review.json (used when final
+    risk escalates to HIGH/CRITICAL after the primary review already ran).
     """
     packet = out_dir / "external-review-packet.json"
     review_path = out_dir / "external-review.json"
 
-    if reviewer == "mock":
-        _write_json(review_path, MOCK_REVIEW)
-    elif reviewer == "codex":
-        args = ["--packet", str(packet), "--out", str(out_dir), "--timeout", "300"]
-        if model:
-            args.extend(["--model", model])
-        _run_script("codex_review.py", *args, timeout=600)
-    elif reviewer == "openai":
-        _run_script(
-            "openai_review.py",
-            "--packet", str(packet),
-            "--out", str(out_dir),
-            "--mode", "openai-api",
-        )
-    else:
-        raise ValueError(f"Unknown reviewer: {reviewer}")
+    # Run state is needed to bind the independent review to this run/head SHA.
+    state = _load_state(out_dir)
+    trace_id = state.get("trace_id")
+    head_sha = state.get("commit_sha", "")
+    run_id = state.get("run_id") or out_dir.name
 
-    _save_state(out_dir, "EXTERNAL_REVIEW_RECEIVED", 50)
-    _update_artifact(out_dir, "external_review", review_path)
+    if not independent_only:
+        if reviewer == "mock":
+            mock_review = MOCK_REVIEW
+            env_path = os.environ.get("HERMES_MOCK_REVIEW")
+            if env_path and Path(env_path).is_file():
+                mock_review = _read_json(Path(env_path))
+            _write_json(review_path, mock_review)
+        elif reviewer == "codex":
+            args = ["--packet", str(packet), "--out", str(out_dir), "--timeout", "300"]
+            if model:
+                args.extend(["--model", model])
+            _run_script("codex_review.py", *args, timeout=600)
+        elif reviewer == "openai":
+            _run_script(
+                "openai_review.py",
+                "--packet", str(packet),
+                "--out", str(review_path),
+                "--mode", "openai-api",
+                "--model", model or "",
+            )
+        else:
+            raise ValueError(f"Unknown reviewer: {reviewer}")
+
+        _save_state(out_dir, "EXTERNAL_REVIEW_RECEIVED", 50)
+        _update_artifact(out_dir, "external_review", review_path)
 
     # Independent adversarial review for HIGH/CRITICAL findings.
     # Default to true for real reviewers; must be explicit for mock.
-    if reviewer != "mock" or independent_review:
-        review = _read_json(review_path)
+    if independent_only or reviewer != "mock" or independent_review:
+        review = _read_json(review_path) if review_path.is_file() else {}
         findings = review.get("findings", [])
         high_or_critical = any(
             str(f.get("severity", "")).lower() in ("high", "critical")
             for f in findings
         )
-        if high_or_critical:
+        if independent_only or high_or_critical or independent_review:
             indep_dir = out_dir / "independent-review"
             indep_dir.mkdir(parents=True, exist_ok=True)
             if reviewer == "codex":
@@ -361,17 +748,28 @@ def stage_external_review(out_dir: Path, reviewer: str, model: str | None, indep
                 _run_script(
                     "openai_review.py",
                     "--packet", str(packet),
-                    "--out", str(indep_dir),
+                    "--out", str(indep_dir / "external-review.json"),
                     "--mode", "openai-api",
+                    "--review-mode", "adversarial",
+                    "--model", model or "",
                 )
             else:
-                # mock path: treat the same review as the independent artifact
-                _write_json(indep_dir / "external-review.json", review)
+                # Mock output is never independent evidence.
+                _write_json(indep_dir / "independent-review-invalid.json", {
+                    "reason_code": "INDEPENDENT_REVIEW_INVALID",
+                    "reviewer": "mock",
+                })
             # Normalize to a single independent-review.json file
             src = indep_dir / "external-review.json"
             dst = out_dir / "independent-review.json"
             if src.is_file():
-                dst.write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+                indep = _read_json(src)
+                # Binding is orchestrator-owned; reviewer provenance must come
+                # from the adapter and is validated rather than self-asserted.
+                indep["trace_id"] = trace_id
+                indep["head_sha"] = head_sha
+                indep["run_id"] = run_id
+                _write_json(dst, indep)
                 _update_artifact(out_dir, "independent_review", dst)
 
     return review_path
@@ -475,7 +873,7 @@ def stage_collect_ci(out_dir: Path) -> dict:
         "ci_status": "unknown",
         "coderabbit_findings": [],
         "codex_re_review": [],
-        "note": "Real CI integration not yet implemented. Returning mock green.",
+        "note": "Real CI integration not yet implemented. Returning unknown; the policy gate will not pass on unverified CI.",
     }
     _write_json(out_dir / "ci-findings.json", findings)
     _save_state(out_dir, "CI_FINDINGS_RECEIVED", 85, findings)
@@ -515,11 +913,10 @@ def stage_final_risk(out_dir: Path) -> dict:
 
     # Changed paths drive the sensitive-path escalation rules; an empty list
     # disabled that whole check.
-    changed_paths = []
-    for t in plan.get("tasks", []):
-        for p in (t.get("write_scope") or t.get("scope") or []):
-            if isinstance(p, str) and p not in changed_paths:
-                changed_paths.append(p)
+    try:
+        changed_paths = _actual_changed_files(out_dir)
+    except ValueError:
+        changed_paths = []
 
     result = _run_script(
         "final_risk.py",
@@ -535,70 +932,122 @@ def stage_final_risk(out_dir: Path) -> dict:
     return result
 
 
-def stage_policy_gate(out_dir: Path) -> dict:
+def stage_policy_gate(out_dir: Path, attempts: int = 0, max_attempts: int = 3, dry_run: bool = False) -> dict:
     """Run the independent policy gate.
 
-    HIGH/CRITICAL risk must have an independent adversarial review artifact.
-    Without it the gate fails closed (BLOCK) rather than letting Hermes
-    reconcile its own output.
+    HIGH/CRITICAL risk must have a valid, bound independent adversarial review
+    artifact.  Unknown or unverified evidence must fail closed (BLOCK) rather
+    than letting Hermes reconcile its own output.  The real gate binary is
+    invoked with the complete documented CLI argument vector.
     """
-    final_risk = _read_json(out_dir / "final-risk.json")
-    risk_level = (final_risk.get("final_risk", "") or "medium").upper()
+    final_risk_path = out_dir / "final-risk.json"
+    try:
+        final_risk = _read_json(final_risk_path)
+    except (OSError, json.JSONDecodeError) as exc:
+        return _set_gate_result(
+            out_dir, "BLOCK",
+            f"final-risk.json missing or unreadable: {exc}",
+            "RISK_EVIDENCE_INVALID", {},
+        )
+
+    raw_risk = final_risk.get("final_risk")
+    if not _valid_risk(raw_risk):
+        return _set_gate_result(
+            out_dir, "BLOCK",
+            f"final_risk {raw_risk!r} is not a valid canonical risk level",
+            "RISK_EVIDENCE_INVALID", final_risk,
+        )
+    risk_level = raw_risk.upper()
+
+    state = _load_state(out_dir)
+    repo = Path(str(state.get("repo", "."))).resolve()
+    head_sha = state.get("commit_sha", "")
 
     # Independent check: HIGH/CRITICAL requires a separate adversarial review.
     if risk_level in ("HIGH", "CRITICAL"):
-        indep_path = out_dir / "independent-review.json"
-        if not indep_path.is_file():
-            result = {
-                "decision": "BLOCK",
-                "reason": "HIGH/CRITICAL risk requires an independent Codex adversarial review (independent-review.json missing)",
-                "final_risk": final_risk,
-            }
-            _write_json(out_dir / "policy-gate.json", result)
-            _save_state(out_dir, "POLICY_BLOCK", 95, result)
-            _update_artifact(out_dir, "policy_gate", out_dir / "policy-gate.json")
-            return result
-
-    # Try to invoke the real gate if the binary is available
-    decision = "PASS"
-    reason = "Dry-run: no real CI or human approval configured."
-    binary = shutil.which("hermes-policy-gate") or (
-        SKILL_DIR.parents[3] / "packages" / "gate" / "dist" / "bin.js"
-    )
-    if Path(str(binary)).is_file():
-        try:
-            manifest = {
-                "version": "1.0.0",
-                "policy_version": "0.1.0",
-                "repository": {"owner": "hermes-ops", "name": "hermes-ops"},
-                "headSha": _load_state(out_dir).get("commit_sha", "0" * 40),
-                "risk_level": final_risk.get("final_risk", "medium"),
-                "ci": {"status": "success"},
-                "review_findings": [],
-                "approval_token": None,
-            }
-            manifest_path = out_dir / "policy-manifest.json"
-            _write_json(manifest_path, manifest)
-            proc = subprocess.run(
-                ["node", str(binary), "--manifest", str(manifest_path), "--json"],
-                capture_output=True,
-                text=True,
-                timeout=60,
+        indep = _validate_independent_review(out_dir, state)
+        if indep is None:
+            return _set_gate_result(
+                out_dir, "BLOCK",
+                "HIGH/CRITICAL risk requires a valid, bound independent adversarial review",
+                "INDEPENDENT_REVIEW_INVALID", final_risk,
             )
-            if proc.returncode == 0:
-                gate = json.loads(proc.stdout)
-                decision = gate.get("decision", "PASS")
-                reason = gate.get("reason", reason)
-            else:
-                reason = proc.stderr[:300]
-        except Exception as exc:
-            reason = f"Real gate unavailable: {exc}"
 
-    result = {"decision": decision, "reason": reason, "final_risk": final_risk}
-    _write_json(out_dir / "policy-gate.json", result)
-    _save_state(out_dir, f"POLICY_{decision}", 95, result)
-    _update_artifact(out_dir, "policy_gate", out_dir / "policy-gate.json")
-    return result
+    try:
+        actual_head = _git_output(repo, "rev-parse", "HEAD")
+    except ValueError as exc:
+        return _set_gate_result(out_dir, "BLOCK", str(exc), "HEAD_SHA_INVALID", final_risk)
+    if actual_head != head_sha:
+        return _set_gate_result(
+            out_dir, "BLOCK", "repository HEAD changed after evidence collection",
+            "HEAD_SHA_MISMATCH", final_risk, {"evidence_head_sha": head_sha, "head_sha": actual_head},
+        )
+    head_sha = actual_head
+
+    if not re.match(r"^[0-9a-f]{40}$", head_sha):
+        return _set_gate_result(
+            out_dir, "BLOCK",
+            f"commit_sha {head_sha!r} is not a 40-char lowercase hex SHA",
+            "HEAD_SHA_INVALID", final_risk,
+        )
+
+    try:
+        changed_files = _changed_files(out_dir, head_sha)
+    except ValueError as exc:
+        return _set_gate_result(out_dir, "BLOCK", str(exc), "CHANGED_FILES_INVALID", final_risk)
+    try:
+        manifest = _build_manifest(out_dir, state, risk_level, changed_files)
+    except Exception as exc:
+        return _set_gate_result(
+            out_dir, "BLOCK",
+            f"policy evidence manifest is invalid: {exc}",
+            "MANIFEST_INVALID", final_risk,
+        )
+    manifest_path = out_dir / "policy-manifest.json"
+    _write_json(manifest_path, manifest)
+
+    binary = _resolve_gate_binary()
+    if not binary:
+        if dry_run:
+            return _set_gate_result(
+                out_dir, "BLOCK",
+                "policy gate binary unavailable; dry-run is synthetic and cannot PASS",
+                "GATE_UNAVAILABLE", final_risk,
+                {"manifest_path": str(manifest_path), "synthetic_status": "UNAVAILABLE"},
+            )
+        return _set_gate_result(
+            out_dir, "BLOCK",
+            "policy gate binary not available",
+            "GATE_UNAVAILABLE", final_risk,
+            {"manifest_path": str(manifest_path)},
+        )
+
+    try:
+        gate = _run_gate_binary(
+            binary, manifest_path, head_sha, risk_level, changed_files,
+            attempts, max_attempts,
+        )
+    except Exception as exc:
+        return _set_gate_result(
+            out_dir, "BLOCK",
+            f"policy gate invocation failed: {exc}",
+            "GATE_UNAVAILABLE", final_risk,
+            {"manifest_path": str(manifest_path)},
+        )
+
+    return _set_gate_result(
+        out_dir, gate["decision"], gate["detail"], gate["reason_code"], final_risk,
+        {
+            "risk_level": gate["risk_level"],
+            "required_gates": gate["required_gates"],
+            "head_sha": head_sha,
+            "changed_files": changed_files,
+            "manifest_path": str(manifest_path),
+            "attempts": attempts,
+            "max_attempts": max_attempts,
+            "raw": gate.get("raw"),
+        },
+    )
 
 
 def stage_repair(out_dir: Path, budget: RepairBudget) -> dict:
@@ -633,8 +1082,8 @@ def stage_outcome(out_dir: Path, budget: RepairBudget | None = None) -> dict:
     start = state.get("started_at_monotonic", time.monotonic())
     duration = round(time.monotonic() - start, 3)
 
-    plan = _read_json(out_dir / "task-plan.json") if (out_dir / "task-plan.json").exists() else {"tasks": []}
-    gate = _read_json(out_dir / "policy-gate.json") if (out_dir / "policy-gate.json").exists() else {}
+    plan = _read_json_optional(out_dir / "task-plan.json", {"tasks": []})
+    gate = _read_json_optional(out_dir / "policy-gate.json", {})
 
     metrics = {
         "schema_version": "1.0.0",
@@ -655,7 +1104,16 @@ def stage_outcome(out_dir: Path, budget: RepairBudget | None = None) -> dict:
         "candidate_skill": None,
     }
     _write_json(out_dir / "outcome.json", metrics)
-    _save_state(out_dir, "OUTCOME_COLLECTED", 100, metrics)
+
+    # Do not overwrite a terminal non-PASS gate status (BLOCK/ESCALATE) with a
+    # success-looking state.  PASS is still promoted to OUTCOME_COLLECTED.
+    current_status = state.get("status", "")
+    if current_status in ("POLICY_BLOCK", "POLICY_ESCALATE"):
+        terminal_status = current_status
+    else:
+        terminal_status = "OUTCOME_COLLECTED"
+
+    _save_state(out_dir, terminal_status, 100, metrics)
     _update_artifact(out_dir, "outcome", out_dir / "outcome.json")
     return metrics
 
@@ -688,29 +1146,31 @@ def main() -> int:
                         help="Estimated max repair cost in USD (default: 10.0)")
     parser.add_argument("--skip-conflict-check", action="store_true",
                         help="Skip conflict detector (useful for fresh repos)")
+    parser.add_argument("--policy-gate-dry-run", action="store_true",
+                        help="Explicitly allow dry-run policy-gate handling; it never grants a synthetic PASS")
     args = parser.parse_args()
+
+    if args.policy_gate_dry_run and args.dispatch_mode != "dry-run":
+        parser.error("--policy-gate-dry-run requires --dispatch-mode dry-run")
 
     repo = Path(args.repo).resolve()
     out_dir = Path(args.out).resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
 
-    # Set the canonical trace id for this run.
-    run_id = out_dir.name
+    # Every invocation gets a fresh identity; output directories may be reused.
+    run_id = f"{dt.datetime.now(dt.timezone.utc).strftime('%Y%m%dT%H%M%S')}-{uuid.uuid4().hex}"
     os.environ["HERMES_TRACE_ID"] = run_id
-    _load_state(out_dir)  # ensure state has trace_id
+    ownership_marker = out_dir / ".hermes-owned"
+    if ownership_marker.is_file():
+        for artifact in ("independent-review.json", "policy-gate.json", "policy-manifest.json", "outcome.json", "repair-result.json"):
+            (out_dir / artifact).unlink(missing_ok=True)
+        independent_dir = out_dir / "independent-review"
+        if independent_dir.is_dir():
+            shutil.rmtree(independent_dir)
+    ownership_marker.write_text("hermes-open-design\n", encoding="ascii")
 
     # Initialize state
-    _save_state(
-        out_dir,
-        "PREFLIGHT",
-        0,
-        {
-            "repo": str(repo),
-            "trace_id": run_id,
-            "started_at": dt.datetime.now(dt.timezone.utc).isoformat(),
-            "started_at_monotonic": time.monotonic(),
-        },
-    )
+    _initialize_state(out_dir, run_id, repo)
 
     try:
         # 1. Evidence
@@ -776,31 +1236,76 @@ def main() -> int:
         stage_collect_ci(out_dir)
 
         # 13. Final risk
-        stage_final_risk(out_dir)
+        final_risk = stage_final_risk(out_dir)
+        # Sensitive changed paths can escalate risk beyond primary review findings.
+        # Run ONLY the independent adversarial review — never overwrite the
+        # canonical primary external-review.json (CX-F6).
+        if str(final_risk.get("final_risk", "")).upper() in ("HIGH", "CRITICAL"):
+            stage_external_review(out_dir, args.reviewer, reviewer_model,
+                                  independent_review=True, independent_only=True)
 
-        # 14. Policy gate
-        gate = stage_policy_gate(out_dir)
-
-        # 15. Repair loop (cost-bounded)
+        # 14. Repair budget
         repair_budget = RepairBudget(
             max_attempts=args.max_repair_attempts,
             max_duration_seconds=args.max_repair_duration,
             max_cost_usd=args.max_repair_cost,
         )
+
+        # 15. Policy gate (initial)
+        gate = stage_policy_gate(
+            out_dir,
+            attempts=0,
+            max_attempts=repair_budget.max_attempts,
+            dry_run=args.policy_gate_dry_run,
+        )
+
+        # 16. Repair loop (cost-bounded)
         while _load_state(out_dir).get("status") == "POLICY_REPAIR" and repair_budget.can_spend():
             stage_repair(out_dir, repair_budget)
-            if _load_state(out_dir).get("status") != "POLICY_REPAIR":
-                break
-            gate = stage_policy_gate(out_dir)
+            final_risk = stage_final_risk(out_dir)
+            if str(final_risk.get("final_risk", "")).upper() in ("HIGH", "CRITICAL"):
+                stage_external_review(out_dir, args.reviewer, reviewer_model,
+                                      independent_review=True, independent_only=True)
+            gate = stage_policy_gate(
+                out_dir,
+                attempts=repair_budget.attempts,
+                max_attempts=repair_budget.max_attempts,
+                dry_run=args.policy_gate_dry_run,
+            )
 
-        # 16. Outcome
+        # If budget was exhausted while the gate still wanted repair, escalate.
+        if _load_state(out_dir).get("status") == "POLICY_REPAIR":
+            final_risk = _read_json_optional(out_dir / "final-risk.json", {})
+            _set_gate_result(
+                out_dir, "ESCALATE",
+                f"repair budget exhausted after {repair_budget.attempts} attempts",
+                "REPAIR_BUDGET_EXHAUSTED", final_risk,
+            )
+
+        # 17. Outcome
         stage_outcome(out_dir, repair_budget)
+
+        state = _load_state(out_dir)
+        gate = _read_json_optional(out_dir / "policy-gate.json", {})
+        decision = str(gate.get("decision", "")).upper()
+        if decision in ("BLOCK", "ESCALATE") or state.get("status") in ("POLICY_BLOCK", "POLICY_ESCALATE"):
+            print(json.dumps({
+                "ok": False,
+                "out_dir": str(out_dir),
+                "state": str(out_dir / "state.json"),
+                "final_status": state.get("status"),
+                "gate_decision": decision,
+                "synthetic_status": gate.get("synthetic_status"),
+            }, indent=2), file=sys.stderr)
+            return 1
 
         print(json.dumps({
             "ok": True,
             "out_dir": str(out_dir),
             "state": str(out_dir / "state.json"),
-            "final_status": _load_state(out_dir).get("status"),
+            "final_status": state.get("status"),
+            "gate_decision": decision,
+            "synthetic_status": gate.get("synthetic_status"),
         }, indent=2))
         return 0
 

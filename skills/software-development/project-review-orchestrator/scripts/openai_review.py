@@ -7,6 +7,8 @@ import argparse
 import json
 import os
 import sys
+import hashlib
+import uuid
 from pathlib import Path
 
 try:
@@ -101,12 +103,16 @@ def validate_review(review: dict) -> list[str]:
     return errors
 
 
-def build_prompt(packet: dict) -> str:
-    """Build the review prompt from a review packet."""
+def build_prompt(packet: dict, review_mode: str = "primary") -> str:
+    """Build the review prompt from a review packet.
+
+    review_mode="adversarial" adds explicit adversarial pressure-testing
+    instructions (used for the independent HIGH/CRITICAL review).
+    """
     evidence = packet.get("repository_snapshot", {})
     analysis = packet.get("hermes_analysis", "")
 
-    return f"""You are an INDEPENDENT PRINCIPAL SOFTWARE REVIEWER.
+    prompt = f"""You are an INDEPENDENT PRINCIPAL SOFTWARE REVIEWER.
 
 You are not the orchestrator. You are not the implementer. You cannot approve a merge.
 Hermes is the authoritative project orchestrator. Your job is to CRITIQUE independently.
@@ -129,6 +135,17 @@ Review independently for: wrong architectural assumptions, incomplete implementa
 Every finding must contain: id, title, severity (low/medium/high/critical), confidence (0-1), claim, evidence_refs, challenge_to_hermes, recommendation, verification.
 
 Explicitly identify cases where Hermes is wrong."""
+    if review_mode == "adversarial":
+        prompt += """
+
+## ADVERSARIAL MODE (independent review)
+You are the independent adversarial reviewer for a HIGH/CRITICAL-risk change.
+Your output is the ONLY independent evidence the policy gate may accept for this run.
+- Actively hunt for silent-bypass paths, fail-open conditions, fabricated evidence, stale/self-attested provenance, and scope violations.
+- Challenge every Hermes claim: for each, state whether it is FACT (evidence-backed), INFERENCE, or UNKNOWN.
+- If you find nothing wrong, list exactly which acceptance criteria and evidence artifacts you checked and why they hold — never answer "looks good" without that.
+- Do not edit, commit, or approve anything. You are read-only and advisory."""
+    return prompt
 
 
 def main() -> int:
@@ -147,15 +164,25 @@ def main() -> int:
         default="openai-api",
         help="'openai-api' calls the API (default); 'chatgpt-human' prepares the prompt and exits",
     )
+    parser.add_argument(
+        "--review-mode",
+        choices=["primary", "adversarial"],
+        default="primary",
+        help="Provenance mode for this invocation.",
+    )
     args = parser.parse_args()
 
     try:
-        packet = json.loads(Path(args.packet).read_text(encoding="utf-8"))
+        # Read packet bytes ONCE: digest the exact bytes the reviewer sees (CX-G1).
+        packet_bytes = Path(args.packet).read_bytes()
+        packet = json.loads(packet_bytes)
+        packet_sha256 = hashlib.sha256(packet_bytes).hexdigest()
     except (OSError, json.JSONDecodeError) as exc:
         print(json.dumps({"ok": False, "error": str(exc)}), file=sys.stderr)
         return 1
 
-    prompt = build_prompt(packet)
+    prompt = build_prompt(packet, args.review_mode)
+    invocation_id = uuid.uuid4().hex
 
     # chatgpt-human mode: prepare prompt only, skip API key and API call
     if args.mode == "chatgpt-human":
@@ -165,6 +192,12 @@ def main() -> int:
         print(json.dumps({
             "ok": True,
             "mode": "chatgpt-human",
+            "review_mode": args.review_mode,
+            "invocation_id": invocation_id,
+            "packet_sha256": packet_sha256,
+            "reviewer_identity": "openai-api",
+            "reviewer_provider": "openai",
+            "reviewer_model": args.model,
             "prompt": str(prompt_path),
             "message": "Prompt prepared. Submit it to ChatGPT manually, then save the result to the --out path.",
         }))
@@ -230,6 +263,12 @@ def main() -> int:
         return 1
 
     review["trace_id"] = args.trace_id
+    review["invocation_id"] = invocation_id
+    review["packet_sha256"] = packet_sha256
+    review["review_mode"] = args.review_mode
+    review["reviewer_identity"] = "openai-api"
+    review["reviewer_provider"] = "openai"
+    review["reviewer_model"] = args.model
     out_path = Path(args.out)
     out_path.parent.mkdir(parents=True, exist_ok=True)
     out_path.write_text(json.dumps(review, indent=2, ensure_ascii=False), encoding="utf-8")
