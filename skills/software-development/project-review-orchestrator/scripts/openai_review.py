@@ -173,13 +173,15 @@ def main() -> int:
     args = parser.parse_args()
 
     try:
-        packet = json.loads(Path(args.packet).read_text(encoding="utf-8"))
+        # Read packet bytes ONCE: digest the exact bytes the reviewer sees (CX-G1).
+        packet_bytes = Path(args.packet).read_bytes()
+        packet = json.loads(packet_bytes)
+        packet_sha256 = hashlib.sha256(packet_bytes).hexdigest()
     except (OSError, json.JSONDecodeError) as exc:
         print(json.dumps({"ok": False, "error": str(exc)}), file=sys.stderr)
         return 1
 
     prompt = build_prompt(packet, args.review_mode)
-    packet_sha256 = hashlib.sha256(Path(args.packet).read_bytes()).hexdigest()
     invocation_id = uuid.uuid4().hex
 
     # chatgpt-human mode: prepare prompt only, skip API key and API call

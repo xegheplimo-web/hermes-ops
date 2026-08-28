@@ -126,6 +126,10 @@ DEFAULT_PROMPT_TEMPLATE = _SKILL_DIR / "templates" / "external-review-prompt.md"
 def validate_review(review: dict) -> list[str]:
     """Validate a parsed review against REVIEW_SCHEMA constraints.
 
+    Enforces the FULL schema: required keys, exact types (including items),
+    non-empty substantive strings, confidence range excluding booleans,
+    evidence_refs item types, and no unexpected properties (CX-F7).
+
     Returns a list of validation error messages (empty list = valid).
     """
     errors: list[str] = []
@@ -133,12 +137,17 @@ def validate_review(review: dict) -> list[str]:
     if not isinstance(review, dict):
         return ["response is not a JSON object"]
 
-    # Check top-level required keys
+    # Top-level required keys
     for key in TOP_LEVEL_REQUIRED:
         if key not in review:
             errors.append(f"missing top-level required key: {key}")
 
-    # Check findings structure
+    for key in ("executive_summary", "architecture_assessment"):
+        value = review.get(key)
+        if value is not None and not (isinstance(value, str) and value.strip()):
+            errors.append(f"'{key}' must be a non-empty string")
+
+    # Findings structure
     findings = review.get("findings", [])
     if not isinstance(findings, list):
         errors.append("'findings' must be an array")
@@ -150,22 +159,37 @@ def validate_review(review: dict) -> list[str]:
             for key in FINDING_REQUIRED:
                 if key not in finding:
                     errors.append(f"findings[{i}] missing required key: {key}")
+            for key in ("id", "title", "claim", "challenge_to_hermes", "recommendation", "verification"):
+                value = finding.get(key)
+                if value is not None and not (isinstance(value, str) and value.strip()):
+                    errors.append(f"findings[{i}].{key} must be a non-empty string")
             sev = finding.get("severity")
-            if sev is not None and sev not in VALID_SEVERITIES:
-                errors.append(
-                    f"findings[{i}].severity '{sev}' not in {sorted(VALID_SEVERITIES)}"
-                )
+            if sev not in VALID_SEVERITIES:
+                errors.append(f"findings[{i}].severity '{sev}' not in {sorted(VALID_SEVERITIES)}")
             conf = finding.get("confidence")
-            if conf is not None and not isinstance(conf, (int, float)):
-                errors.append(f"findings[{i}].confidence must be a number")
+            if isinstance(conf, bool) or not isinstance(conf, (int, float)) or not (0.0 <= conf <= 1.0):
+                errors.append(f"findings[{i}].confidence must be a number in [0, 1]")
+            evidence = finding.get("evidence_refs")
+            if not isinstance(evidence, list) or not all(
+                isinstance(e, str) and e.strip() for e in evidence
+            ):
+                errors.append(f"findings[{i}].evidence_refs must be a list of non-empty strings")
+            unexpected = set(finding) - set(FINDING_REQUIRED)
+            if unexpected:
+                errors.append(f"findings[{i}] unexpected keys: {sorted(unexpected)}")
 
-    # Check missing_evidence is a list
-    if "missing_evidence" in review and not isinstance(review["missing_evidence"], list):
-        errors.append("'missing_evidence' must be an array")
+    # missing_evidence / priority_order: arrays of strings
+    for key in ("missing_evidence", "priority_order"):
+        value = review.get(key)
+        if value is not None and (
+            not isinstance(value, list) or not all(isinstance(e, str) for e in value)
+        ):
+            errors.append(f"'{key}' must be an array of strings")
 
-    # Check priority_order is a list
-    if "priority_order" in review and not isinstance(review["priority_order"], list):
-        errors.append("'priority_order' must be an array")
+    # No unexpected top-level properties (additionalProperties: False)
+    unexpected = set(review) - set(TOP_LEVEL_REQUIRED)
+    if unexpected:
+        errors.append(f"unexpected top-level keys: {sorted(unexpected)}")
 
     return errors
 
