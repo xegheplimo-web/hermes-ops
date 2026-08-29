@@ -5,6 +5,7 @@
     { "path": "./packages/policy" },
     { "path": "./packages/db" },
     { "path": "./packages/adapters" },
-    { "path": "./packages/gate" }
+    { "path": "./packages/gate" },
+    { "path": "./packages/ruleset" }
   ]
 }

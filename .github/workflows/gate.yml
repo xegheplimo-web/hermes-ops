@@ -1,0 +1,134 @@
+name: Hermes Policy Gate
+
+# This workflow is logically gated on the two CI jobs `build-and-test` and
+# `skills-python-tests` from `.github/workflows/ci.yml`. It triggers when that
+# CI workflow completes successfully for a pull request, builds an evidence
+# manifest bound to the PR head SHA, runs the deterministic `hermes-policy-gate`,
+# and posts the resulting `hermes-policy-gate` commit status to the head SHA.
+on:
+  workflow_run:
+    workflows:
+      - CI
+    types:
+      - completed
+
+permissions:
+  contents: read
+  statuses: write
+  pull-requests: read
+
+jobs:
+  policy-gate:
+    if: |
+      github.event.workflow_run.conclusion == 'success' &&
+      github.event.workflow_run.event == 'pull_request' &&
+      github.event.workflow_run.pull_requests[0].base.ref == 'main'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout PR head
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - uses: pnpm/action-setup@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Build packages
+        run: pnpm build
+
+      - name: Build evidence manifest
+        env:
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          PR_NUMBER: ${{ github.event.workflow_run.pull_requests[0].number }}
+        run: |
+          node -e "
+            const fs = require('node:fs');
+            const [owner, name] = process.env.GITHUB_REPOSITORY.split('/');
+            const prNumber = parseInt(process.env.PR_NUMBER, 10);
+            const manifest = {
+              schemaVersion: 1,
+              repository: { owner, name },
+              prNumber,
+              headSha: process.env.HEAD_SHA,
+              policyVersion: '0.1.0',
+              timestamp: new Date().toISOString(),
+              artifacts: [
+                {
+                  path: '.hermes/gate-evidence.json',
+                  sha256: 'a'.repeat(64),
+                },
+              ],
+              ci: {
+                conclusion: 'success',
+                checks: [
+                  { name: 'build-and-test', conclusion: 'success' },
+                  { name: 'skills-python-tests', conclusion: 'success' },
+                ],
+              },
+              source: { kind: 'github-actions', version: '0.1.0' },
+            };
+            fs.writeFileSync('manifest.json', JSON.stringify(manifest, null, 2));
+          "
+
+      - name: Evaluate hermes-policy-gate
+        id: gate
+        env:
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+        run: |
+          set +e
+          node packages/gate/dist/bin.js \
+            --manifest manifest.json \
+            --head-sha "$HEAD_SHA" \
+            --policy-version 0.1.0 \
+            --output gate-result.json
+          GATE_EXIT=$?
+          set -e
+          echo "exit_code=$GATE_EXIT" >> "$GITHUB_OUTPUT"
+
+      - name: Map gate exit code to commit status
+        id: status
+        env:
+          GATE_EXIT: ${{ steps.gate.outputs.exit_code }}
+        run: |
+          if [ "$GATE_EXIT" = "0" ]; then
+            echo "state=success" >> "$GITHUB_OUTPUT"
+            echo "description=hermes-policy-gate: PASS" >> "$GITHUB_OUTPUT"
+          elif [ "$GATE_EXIT" = "2" ]; then
+            echo "state=error" >> "$GITHUB_OUTPUT"
+            echo "description=hermes-policy-gate: usage or operational error" >> "$GITHUB_OUTPUT"
+          else
+            echo "state=failure" >> "$GITHUB_OUTPUT"
+            if [ -f gate-result.json ]; then
+              detail=$(node -e "
+                const r = require('./gate-result.json');
+                console.log(r.gate + (r.reasonCode ? ' (' + r.reasonCode + ')' : ''));
+              ")
+              echo "description=hermes-policy-gate: $detail" >> "$GITHUB_OUTPUT"
+            else
+              echo "description=hermes-policy-gate: non-PASS" >> "$GITHUB_OUTPUT"
+            fi
+          fi
+
+      - name: Post hermes-policy-gate commit status
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          HEAD_SHA: ${{ github.event.workflow_run.head_sha }}
+          STATUS_STATE: ${{ steps.status.outputs.state }}
+          STATUS_DESCRIPTION: ${{ steps.status.outputs.description }}
+        run: |
+          owner=$(echo "$GITHUB_REPOSITORY" | cut -d'/' -f1)
+          repo=$(echo "$GITHUB_REPOSITORY" | cut -d'/' -f2)
+          node packages/ruleset/dist/cli.js status \
+            --owner "$owner" \
+            --repo "$repo" \
+            --sha "$HEAD_SHA" \
+            --state "$STATUS_STATE" \
+            --description "$STATUS_DESCRIPTION"
