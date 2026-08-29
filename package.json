@@ -9,7 +9,8 @@
     "test:integration": "vitest run integration",
     "lint": "tsc -b --pretty false",
     "db:migrate": "tsc -b packages/db/tsconfig.json && node packages/db/dist/migrate-bin.js",
-    "e2e": "node e2e/smoke.mjs"
+    "e2e": "node e2e/smoke.mjs",
+    "test:agentmemory": "node scripts/agentmemory-enrich.test.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.0.0",
