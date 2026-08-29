@@ -1,0 +1,23 @@
+{
+  "state": "CLOSED",
+  "consecutive_failures": 0,
+  "total_attempts": 2,
+  "total_failures": 0,
+  "cost_spent_usd": 1.55,
+  "opened_at": null,
+  "cooldown_seconds": 300,
+  "trip_reason": null,
+  "trip_history": [],
+  "last_error": null,
+  "run_id": "2026-08-29T172812Z-98712d1",
+  "trace_id": "2026-08-29T172812Z-98712d1",
+  "failure_rate": 0.0,
+  "config": {
+    "consecutive_failure_threshold": 3,
+    "failure_rate_threshold": 0.5,
+    "failure_rate_min_samples": 4,
+    "cost_budget_usd": 10.0,
+    "cooldown_seconds": 300,
+    "cooldown_max_seconds": 3600
+  }
+}
