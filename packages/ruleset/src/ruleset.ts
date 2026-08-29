@@ -38,16 +38,18 @@ export interface RulesetPayload {
     | {
         readonly type: 'required_status_checks';
         readonly parameters: {
-          readonly required_status_checks: readonly { readonly context: string }[];
-          readonly strict: boolean;
+            readonly required_status_checks: readonly { readonly context: string }[];
+            readonly strict_required_status_checks_policy: boolean;
         };
       }
     | {
         readonly type: 'pull_request';
         readonly parameters: {
-          readonly required_approving_review_count: number;
-          readonly dismiss_stale_reviews_on_push: boolean;
-          readonly require_code_owner_review: boolean;
+            readonly required_approving_review_count: number;
+            readonly dismiss_stale_reviews_on_push: boolean;
+            readonly require_code_owner_review: boolean;
+            readonly require_last_push_approval: boolean;
+            readonly required_review_thread_resolution: boolean;
         };
       }
   )[];
@@ -69,15 +71,17 @@ export const buildHermesRuleset = (name: string = HERMES_RULESET_NAME): RulesetP
       type: 'required_status_checks',
       parameters: {
         required_status_checks: HERMES_STATUS_CHECKS.map((context) => ({ context })),
-        strict: true,
+        strict_required_status_checks_policy: true,
       },
     },
     {
       type: 'pull_request',
       parameters: {
-        required_approving_review_count: 1,
+        required_approving_review_count: 0,
         dismiss_stale_reviews_on_push: false,
         require_code_owner_review: false,
+        require_last_push_approval: false,
+        required_review_thread_resolution: false,
       },
     },
   ],

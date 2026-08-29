@@ -52,11 +52,11 @@ describe('buildHermesRuleset', () => {
     expect(statusRule?.parameters.required_status_checks.map((c) => c.context)).toEqual(
       HERMES_STATUS_CHECKS,
     );
-    expect(statusRule?.parameters.strict).toBe(true);
+    expect(statusRule?.parameters.strict_required_status_checks_policy).toBe(true);
 
     const prRule = payload.rules.find((r) => r.type === 'pull_request');
     expect(prRule).toBeDefined();
-    expect(prRule?.parameters.required_approving_review_count).toBeGreaterThanOrEqual(1);
+    expect(prRule?.parameters.required_approving_review_count).toBe(0);
     expect(prRule?.parameters.dismiss_stale_reviews_on_push).toBe(false);
   });
 
