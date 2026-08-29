@@ -53,6 +53,7 @@ packages/policy     # deterministic fail-closed policy evaluator
 packages/db         # PostgreSQL migrations, queue claim/recovery SQL, retry/backoff helpers
 packages/adapters   # GitHub webhook verification, CodeRabbit normalization, coding-agent adapters
 packages/gate       # hermes-policy-gate local deterministic CLI around the policy evaluator
+packages/ruleset    # hermes-ruleset CLI + GitHub ruleset / head-SHA status binding
 skills/             # governance skills (orchestrator + tests, wired into CI)
 e2e/                # end-to-end smoke tests
 machine-discovery/  # repository/drive discovery artifacts
@@ -268,6 +269,32 @@ gitignored; runtime artifacts (`circuit-breaker.json`, `devin-dispatch-log.json`
    `dist/`), then runs every Python governance test suite: offline orchestrator
    unit tests, Ops DB tests, canonical e2e pipeline, and the redaction gate.
 
+## Usage
+
+```bash
+pnpm install --frozen-lockfile
+pnpm build            # tsc -b root builds all packages
+pnpm lint             # tsc -b --pretty false
+pnpm test             # all unit + integration tests
+pnpm --filter ruleset test
+
+# Preview the ruleset payload (dry-run)
+hermes-ruleset apply --owner <owner> --repo <repo> --dry-run
+
+# Apply or update the Hermes ruleset idempotently
+hermes-ruleset apply --owner <owner> --repo <repo> --token $GITHUB_TOKEN
+
+# Post a hermes-policy-gate commit status to a head SHA
+hermes-ruleset status --owner <owner> --repo <repo> --sha <40-hex> --state <success|failure|error|pending>
+
+# Evaluate a local evidence manifest
+hermes-policy-gate --manifest evidence.json --head-sha <40-hex> --policy-version 0.1.0
+```
+
+`.github/workflows/gate.yml` triggers when `CI` completes, builds an
+EvidenceManifest v1 bound to the PR head SHA, runs `hermes-policy-gate`, and
+posts the resulting `hermes-policy-gate` commit status.
+
 ## Status
 
 - ✅ EvidenceManifest v1 contracts + policy evaluator
@@ -276,5 +303,5 @@ gitignored; runtime artifacts (`circuit-breaker.json`, `devin-dispatch-log.json`
 - ✅ `hermes-policy-gate` CLI (exit 0/1/2 contract)
 - ✅ Canonical pipeline proven end-to-end: Evidence → Devin → OpenCode → Codex review → PR → CI → gate PASS → merge (first green run recorded in git history)
 - ✅ Governance skills + 2-job CI, redaction gate
-- 🔜 GitHub ruleset integration and head-SHA evidence binding
+- ✅ GitHub ruleset integration and head-SHA evidence binding
 - 🔜 Optional AgentMemory enrichment for verified lessons

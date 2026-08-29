@@ -1,0 +1,25 @@
+{
+  "name": "@hermes-ops/ruleset",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "hermes-ruleset": "./dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "test": "vitest run --root ../.. packages/ruleset/tests",
+    "lint": "tsc -b --pretty false"
+  },
+  "dependencies": {
+    "@hermes-ops/contracts": "workspace:*"
+  }
+}
