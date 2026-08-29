@@ -295,6 +295,36 @@ hermes-policy-gate --manifest evidence.json --head-sha <40-hex> --policy-version
 EvidenceManifest v1 bound to the PR head SHA, runs `hermes-policy-gate`, and
 posts the resulting `hermes-policy-gate` commit status.
 
+## AgentMemory enrichment
+
+`scripts/agentmemory-enrich.mjs` is a zero-dependency Node script that reads an
+evidence manifest + a policy-gate result JSON and sends a verified lesson to the
+AgentMemory HTTP API (`POST /agentmemory/memories`). It is idempotent by
+`evidence_identity`: a `GET /agentmemory/memories?evidence_identity=…` lookup
+skips the POST when a memory already exists. Only gate-PASS results are
+enriched; non-PASS is a legitimate skip (exit 0). Secret-looking field names
+anywhere in the manifest or gate result are rejected before any network call,
+mirroring the contracts validation posture. The gate result is redacted to a
+stable subset (`gate`, `riskLevel`, `reasonCode`, `policyVersion`) — the full
+manifest and `detail` are never sent.
+
+```bash
+# Dry-run: print the lesson payload, no HTTP
+node scripts/agentmemory-enrich.mjs \
+  --manifest evidence.json --gate-result gate-result.json --dry-run
+
+# Real enrichment (needs AGENTMEMORY_BASE_URL or --base-url)
+AGENTMEMORY_BASE_URL=http://localhost:8080 node scripts/agentmemory-enrich.mjs \
+  --manifest evidence.json --gate-result gate-result.json
+```
+
+Exit codes: `0` = enriched/skipped, `1` = validation or transport failure,
+`2` = usage/operational error. Offline tests (mocked `fetch`, `node:test`):
+
+```bash
+pnpm test:agentmemory        # or: node scripts/agentmemory-enrich.test.mjs
+```
+
 ## Status
 
 - ✅ EvidenceManifest v1 contracts + policy evaluator
@@ -304,4 +334,4 @@ posts the resulting `hermes-policy-gate` commit status.
 - ✅ Canonical pipeline proven end-to-end: Evidence → Devin → OpenCode → Codex review → PR → CI → gate PASS → merge (first green run recorded in git history)
 - ✅ Governance skills + 2-job CI, redaction gate
 - ✅ GitHub ruleset integration and head-SHA evidence binding
-- 🔜 Optional AgentMemory enrichment for verified lessons
+- ✅ AgentMemory enrichment for verified lessons (`scripts/agentmemory-enrich.mjs`)
