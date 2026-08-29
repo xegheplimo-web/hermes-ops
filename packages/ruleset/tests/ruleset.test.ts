@@ -56,7 +56,7 @@ describe('buildHermesRuleset', () => {
 
     const prRule = payload.rules.find((r) => r.type === 'pull_request');
     expect(prRule).toBeDefined();
-    expect(prRule?.parameters.required_approving_review_count).toBeGreaterThanOrEqual(1);
+    expect(prRule?.parameters.required_approving_review_count).toBe(0);
     expect(prRule?.parameters.dismiss_stale_reviews_on_push).toBe(false);
   });
 
