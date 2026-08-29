@@ -77,7 +77,7 @@ export const buildHermesRuleset = (name: string = HERMES_RULESET_NAME): RulesetP
     {
       type: 'pull_request',
       parameters: {
-        required_approving_review_count: 1,
+        required_approving_review_count: 0,
         dismiss_stale_reviews_on_push: false,
         require_code_owner_review: false,
         require_last_push_approval: false,
